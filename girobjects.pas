@@ -1039,6 +1039,8 @@ begin
   begin
       FImpliedPointerLevel:=AValue;
   end;
+  if FImpliedPointerLevel > 3 then
+    FImpliedPointerLevel:=3;
 end;
 
 constructor TGirBaseType.Create(AOwner: TObject; ANode: TDOMNode);

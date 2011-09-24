@@ -1161,7 +1161,7 @@ var
         otUnion: Exit; // these will be done on the second pass. this is to avoid duplicate names if they are the same as some function or property. giving the function priority of the original name
 
 
-        otGlibSignal : if AObjectType <> gtClass then TypeDecl.Add(IndentText(WriteCallBack(TgirCallback(Field),True, UsedNames),4,0)); // classes do not have signals They are in the class *struct*
+        otGlibSignal :;// signals are external to the object and not 'part' of them
 
         //WriteFunction(AFunction, AItem, AIsMethod, AWantWrapperForObject, AFunctionList): String;
         otFunction : TypeFuncs.Add(IndentText(WriteFunction(TgirFunction(Field), AItem, False, True, UnitFuncs, UsedNames),4,0));
