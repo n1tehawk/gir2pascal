@@ -471,7 +471,7 @@ begin
   NS := Self;
   // some basic fixes
   PlainCType:=StringReplace(StripPointers(ACType, @PointerLevel), ' ', '_', [rfReplaceAll]);
-  if (PlainCType = 'gchar') or (PlainCType = 'guchar') or (PlainCType = 'char') then
+  if (PlainCType = 'gchar') or {(PlainCType = 'guchar') or} (PlainCType = 'char') then
     AName := 'GLib.utf8';
 
   if (PlainCType = 'GType')  {or (AName = 'Type')} or (AName = 'GType')then
