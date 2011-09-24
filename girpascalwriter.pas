@@ -887,7 +887,7 @@ begin
 end;
 
 procedure TPascalUnit.HandleRecord(AItem: TgirRecord);
-  begin
+begin
   ResolveTypeTranslation(AItem);
   AItem.ImpliedPointerLevel:=1; // will not be decreased only will grow
 
@@ -912,11 +912,45 @@ begin
   TypeSect.Lines.Add('  { '+ AItem.CType+' }');
   TypeSect.Lines.Add(IndentText(AItem.TranslatedName +' = record',2,0));
   TypeSect.Lines.Add(IndentText('{ opaque type }',4,0));
-  TypeSect.Lines.Add(IndentText('Unknown: Pointer;',4,0)); // to prevent crashes of the compiler
-
+  //TypeSect.Lines.Add(IndentText('Unknown: Pointer;',4,0)); // to prevent crashes of the compiler
   TypeSect.Lines.Add(IndentText('end;',2,1));
 
 end;
+
+function HasPackedBitfield(var PackedBits: TStringList): Boolean;
+begin
+  HasPackedBitfield := PackedBits <> nil;
+end;
+
+procedure PackedBitsAddEntry (var PackedBits: TStringList; AItem: TGirBaseType; var APackedBitsFieldCount: Integer; AEntry: String; AOriginalDeclList: TStrings); // creates a new type to hold the packed bits
+const
+  BitType = '  %sBitfield%d = bitpacked record';
+var
+  BitEntry: String;
+begin
+  if PackedBits = nil then
+  begin
+    PackedBits := TStringList.Create;
+    PackedBits.Add(Format(BitType,[AItem.TranslatedName, APackedBitsFieldCount]));
+    BitEntry := Format('    Bitfield%d : %sBitfield%d; { auto generated type }', [APackedBitsFieldCount, AItem.TranslatedName, APackedBitsFieldCount]);
+    AOriginalDeclList.Add(BitEntry);
+    Inc(APackedBitsFieldCount);
+  end;
+  // now packed bits is assigned
+  PackedBits.Add(Format('    %s;', [AEntry]));
+end;
+
+function EndPackedBits(var PackedBits: TStringList): String;
+begin
+  if PackedBits = nil then
+    Exit;
+  PackedBits.Add('  end;');
+  Result := PackedBits. Text;
+  FreeAndNil(PackedBits);
+end;
+
+
+
 
 procedure TPascalUnit.HandleFunction(AItem: TgirFunction);
 var
@@ -1014,39 +1048,6 @@ var
   PackedBitsFieldCount: Integer = 0;
   PackedBits: TStringList = nil;
 
-
-  function HasPackedBitfield: Boolean;
-  begin
-    HasPackedBitfield := PackedBits <> nil;
-  end;
-
-  procedure PackedBitsAddEntry (AEntry: String); // creates a new type to hold the packed bits
-  const
-    BitType = '  %sBitfield%d = bitpacked record';
-  var
-    BitEntry: String;
-  begin
-    if PackedBits = nil then
-    begin
-      PackedBits := TStringList.Create;
-      PackedBits.Add(Format(BitType,[AItem.TranslatedName, PackedBitsFieldCount]));
-      BitEntry := Format('    Bitfield%d : %sBitfield%d; { auto generated type }', [PackedBitsFieldCount, AItem.TranslatedName, PackedBitsFieldCount]);
-      TypeDecl.Add(BitEntry);
-      Inc(PackedBitsFieldCount);
-    end;
-    // now packed bits is assigned
-    PackedBits.Add(Format('    %s;', [AEntry]));
-  end;
-
-  procedure EndPackedBits;
-  begin
-    if PackedBits = nil then
-      Exit;
-    PackedBits.Add('  end;');
-    WantTypeSection.Lines.AddStrings(PackedBits);
-    FreeAndNil(PackedBits);
-  end;
-
   function GetTypeForProperty(AProperty: TgirProperty; out SetFound: Boolean): String;
   var
     i,j: Integer;
@@ -1138,7 +1139,7 @@ var
     Param := WriteParamAsString(AParam,i, ParamIsBitSized, nil, UsedNames);
 
     if ParamIsBitSized then
-      PackedBitsAddEntry(Param)
+      PackedBitsAddEntry(PackedBits, AItem, PackedBitsFieldCount, Param, TypeDecl)
     else
       TypeDecl.Add(IndentText(Param+';',4,0));
     AddField := ParamIsBitSized;
@@ -1272,8 +1273,8 @@ begin
     WrittenFields:=0;
     for i := 0 to Aitem.Fields.Count-1 do begin
       HandleFieldType(AItem.Fields.Field[i], False, AddedBitSizedType);
-      if (not AddedBitSizedType and HasPackedBitfield) or (i = AItem.Fields.Count-1) then
-        EndPackedBits;
+      if HasPackedBitfield(PackedBits) and (not AddedBitSizedType or (i = AItem.Fields.Count-1) )then
+        WantTypeSection.Lines.Add(EndPackedBits(PackedBits));
     end;
   end;
 
@@ -1562,12 +1563,28 @@ end;
 
 function TPascalUnit.WriteRecord(ARecord: TgirRecord; ABaseIndent: Integer = 0; AIsUnion: Boolean = False): String;
 var
+  PackedBits: TStringList = nil;
+  PackedBitsCount: Integer = 0;
+  AddedBitSizedType: Boolean;
   TypeDecl: TStringList;
   i: Integer;
+  function AddField(AField: TGirBaseType): Boolean;
+  var
+    Param: String;
+//    Iten
+  begin
+    Result := False;
+    Param := WriteParamAsString(TgirTypeParam(AField),i, Result);
+    if Result and not AIsUnion then
+      PackedBitsAddEntry(PackedBits, ARecord, PackedBitsCount, Param, TypeDecl)
+    else
+      TypeDecl.Add(IndentText(Param+';',ABaseIndent+4,0));
+  end;
+var
   Field: TGirBaseType;
   UseName: String;
   Symbol: String;
-  Dummy: Boolean;
+
 begin
   TypeDecl := TStringList.Create;
   TypeDecl.Add('');
@@ -1584,20 +1601,23 @@ begin
   TypeDecl.Add(IndentText(UseName +Symbol+ 'record',ABaseIndent+2,0));
 
   // If a type size = 0 then this can cause problems for the compiler! bug 20265
-  if ARecord.Fields.Count = 0 then
-    TypeDecl.Add(IndentText('Unknown: Pointer;', ABaseIndent+4,0));
+  //if ARecord.Fields.Count = 0 then
+  //  TypeDecl.Add(IndentText('Unknown: Pointer;', ABaseIndent+4,0));
 
   for i := 0 to ARecord.Fields.Count-1 do
     begin
+      AddedBitSizedType:=False;
       Field := ARecord.Fields.Field[i];
       case Field.ObjectType of
         otArray,
-        otTypeParam: TypeDecl.Add(IndentText(WriteParamAsString(TgirTypeParam(Field),i, Dummy)+';',ABaseIndent+4,0));
+        otTypeParam: AddedBitSizedType := AddField(Field);
         otCallback : TypeDecl.Add(IndentText(WriteCallBack(TgirCallback(Field),True),ABaseIndent+4,0));
         otUnion: TypeDecl.Add(IndentText(WriteUnion(TgirUnion(Field), True, ABaseIndent),ABaseIndent+4));
       else
         TypeDecl.Add(IndentText(Field.Name+ ' ' + Field.ClassName,4,0)); // this of course will make the compiler barf
       end;
+      if HasPackedBitfield(PackedBits) and ((i = ARecord.Fields.Count-1)  or (not AddedBitSizedType)) then
+        WantTypeSection.Lines.Add(EndPackedBits(PackedBits));
 
     end;
   TypeDecl.Add(IndentText('end;',ABaseIndent+2,1));
@@ -1858,7 +1878,7 @@ begin
   Str.WriteString(IndentText('unit '+ UnitName+';',0,2));
   Str.WriteString(IndentText('{$MODE OBJFPC}{$H+}',0,2));
   Str.WriteString(IndentText('{$PACKRECORDS C}',0,1));
-  Str.WriteString(IndentText('{$BITPACKING ON}',0,1));
+  //Str.WriteString(IndentText('{$BITPACKING ON}',0,1)); not needed since we set records that need is bitpacked
   //Str.WriteString(IndentText('{$CALLING CDECL}',0,2));
   Str.WriteString(IndentText('{$MODESWITCH DUPLICATELOCALS+}',0,2));
 
