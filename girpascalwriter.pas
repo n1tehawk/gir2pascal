@@ -26,19 +26,22 @@ uses
   Classes, SysUtils, girNameSpaces, girObjects, girTokens, contnrs;
 
 type
-  TUnitWriteEvent = procedure (Sender: TObject; AUnitName: AnsiString; AStream: TStringStream) of object;
+  TgirWriteEvent = procedure (Sender: TObject; AUnitName: AnsiString; AStream: TStringStream) of object;
 
   { TgirPascalWriter }
 
   TgirPascalWriter = class
   private
-    FOnUnitWriteEvent: TUnitWriteEvent;
+    FDefaultUnitExtension: String;
+    FOnUnitWriteEvent: TgirWriteEvent;
     FNameSpaces: TgirNamespaces;
     FUnits: TList;
+    FWantTest: Boolean;
   public
-     constructor Create(ANameSpaces: TgirNamespaces);
+     constructor Create(ANameSpaces: TgirNamespaces; AWantTest: Boolean);
      procedure GenerateUnits;
-     property OnUnitWriteEvent: TUnitWriteEvent read FOnUnitWriteEvent write FOnUnitWriteEvent;
+     property OnUnitWriteEvent: TgirWriteEvent read FOnUnitWriteEvent write FOnUnitWriteEvent;
+     property DefaultUnitExtension: String read FDefaultUnitExtension write FDefaultUnitExtension; // is .pas by default
   end;
 
 
@@ -180,7 +183,11 @@ type
     FInterfaceSection: TPInterface;
     FLibName: String;
     FNameSpace: TgirNamespace;
+    FWantTest: Boolean;
     ProcessLevel: Integer; //used to know if to write forward definitions
+    FTestCFile: TStringStream;
+    FTestPascalFile: TStringStream;
+    FTestPascalBody: TStringList;
     function GetUnitName: String;
 
     // functions to ensure the type is being written in the correct declaration
@@ -230,13 +237,16 @@ type
 
     procedure ProcessType(AType: TGirBaseType; AForceWrite: Boolean = False);
     procedure ResolveFuzzyTypes;
+    procedure AddTestType(APascalName: String; ACName: String);
   public
-    constructor Create(ANameSpace: TgirNamespace; ALinkDynamic: Boolean);
+    constructor Create(ANameSpace: TgirNamespace; ALinkDynamic: Boolean; AWantTest: Boolean);
+    destructor Destroy; override;
     procedure ProcessConsts(AList:TList); // of TgirBaseType descandants
     procedure ProcessTypes(AList:TFPHashObjectList); // of TgirBaseType descandants
     procedure ProcessFunctions(AList:TList);// of TgirFunction
     procedure GenerateUnit;
     function AsStream: TStringStream;
+    procedure Finish;
 
     property InterfaceSection: TPInterface read FInterfaceSection;
     property ImplementationSection: TPImplementation read FImplementationSection;
@@ -614,6 +624,8 @@ begin
     WriteLn('Unknown Type: ', AType.ClassName);
     Halt;
   end; // case
+  if (AType.InheritsFrom(TgirRecord)) and (TgirRecord(AType).HasFields) then
+    AddTestType(AType.TranslatedName, AType.CType);
 
   AType.Writing:=msWritten;
   Dec(ProcessLevel);
@@ -641,6 +653,43 @@ begin
         end;
       end;
     end;
+end;
+
+procedure TPascalUnit.AddTestType(APascalName: String; ACName: String);
+const
+  CFunction = 'int GetSizeOf_%s(void)'+
+              '{  return sizeof(%s); };'+LineEnding;
+  PImport = 'function GetSizeOf_%s: LongInt; cdecl; external;'+LineEnding;
+  PTest = 'procedure Test_%s;'                                                         +LineEnding+
+          'var'                                                                        +LineEnding+
+          '  PSize: Integer;'                                                          +LineEnding+
+          '  CSize: Integer;'                                                          +LineEnding+
+          'begin'                                                                      +LineEnding+
+          '  PSize := SizeOf(%s);'                                                     +LineEnding+
+          '  CSize := GetSizeOf_%s;'                                                   +LineEnding+
+          '  if CSize = PSize then'                                                    +LineEnding+
+          '    WriteLn(''%s Matches C Size: '',CSize)'                                 +LineEnding+
+          '  else'                                                                     +LineEnding+
+          '    WriteLn(''%s size ('',PSize,'') does NOT match %s size ('',CSize,'')'');' +LineEnding+
+          'end;'                                                                       +LineEnding;
+var
+  CF: String;
+  PI: String;
+  PT: String;
+begin
+  if not FWantTest then
+    Exit;
+  if (ACName = '') or (ACName[1] = '_') then // we skip private types
+    Exit;
+
+  CF := Format(CFunction,[ACName, ACName]);
+  PI := Format(PImport,  [ACName]);
+  PT := Format(PTest,    [ACName, APascalName, ACName, APascalName, APascalName, ACName]);
+
+  FTestCFile.WriteString(CF); // c sizeof wrapper
+  FTestPascalFile.WriteString(PI); // c import
+  FTestPascalFile.WriteString(PT); // pascal testproc
+  FTestPascalBody.Add(Format('Test_%s;',[ACName])); //call pascal testproc
 end;
 
 function TPascalUnit.WantTypeSection: TPDeclarationType;
@@ -961,6 +1010,7 @@ var
   TypeFuncs: TStrings;
   ParentType: String ='';
   UsedNames: TStringList;
+  WrittenFields: Integer;
 
   function GetTypeForProperty(AProperty: TgirProperty; out SetFound: Boolean): String;
   var
@@ -1040,10 +1090,12 @@ var
     Param: String;
   begin
     ResolveTypeTranslation(AParam.VarType);
-    if (ParentType <> '') and (ParenParams(AParam.VarType.TranslatedName) = ParentType) then
+    Inc(WrittenFields);
+    if (WrittenFields = 1) and (AObjectType = gtClass) and (TgirClass(AItem).ParentClass <> nil) then
     begin
       Exit;
     end;
+
     Param := WriteParamAsString(AParam,i, nil, UsedNames);
     //if Pos('destroy_:', Param) > 0 then
     //  Param := StringReplace(Param, 'destroy_', 'destroy_f', [rfReplaceAll]);
@@ -1063,7 +1115,7 @@ var
         otCallback,
         otArray,
         otTypeParam,
-        otUnion: ; // these will be done on the second pass. this is to make the field names different if they are the same as some function or property. giving the function priority of the original name
+        otUnion: Exit; // these will be done on the second pass. this is to avoid duplicate names if they are the same as some function or property. giving the function priority of the original name
 
 
         otGlibSignal : if AObjectType <> gtClass then TypeDecl.Add(IndentText(WriteCallBack(TgirCallback(Field),True, UsedNames),4,0)); // classes do not have signals They are in the class *struct*
@@ -1166,11 +1218,17 @@ begin
     AddGetTypeProc(TgirGType(AItem));
   end;
   TypeDecl.Add(IndentText(AItem.TranslatedName +' = object'+ParentType,2,0));
-  // two passes to process the fields last for naming reasons
+
+  // two passes to process the fields last for naming reasons first for methods/properties second for fields
   for i := 0 to Aitem.Fields.Count-1 do
     HandleFieldType(AItem.Fields.Field[i], True);
-  for i := 0 to Aitem.Fields.Count-1 do
-    HandleFieldType(AItem.Fields.Field[i], False);
+  if AItem.CType <> 'GInitiallyUnowned' then // empty type GInitiallyUnowned is empty and aliased to GObject which causes object introspection to add the types again since it's empty...how many places does that happen...
+  begin
+    WrittenFields:=0;
+    for i := 0 to Aitem.Fields.Count-1 do
+      HandleFieldType(AItem.Fields.Field[i], False);
+  end;
+
 
 
   if TypeFuncs.Count > 0 then
@@ -1595,17 +1653,48 @@ begin
     ABaseType.TranslatedName:=MakePascalTypeFromCType(ABaseType.CType, 0);
 end;
 
-constructor TPascalUnit.Create(ANameSpace: TgirNamespace; ALinkDynamic: Boolean);
+constructor TPascalUnit.Create(ANameSpace: TgirNamespace; ALinkDynamic: Boolean; AWantTest: Boolean);
+const
+  CBasic = '#include <%s>'+LineEnding;
+  PBasic = 'program %s_test;'+LineEnding+
+           '{$LINK %s_c_test}'+LineEnding+
+           'uses %s;'+LineEnding;
 begin
   ProcessLevel:=0;
+  FWantTest:=AWantTest;
   FLinkDynamic := ALinkDynamic;
   FFinalizeSection := TPFinialization.Create(Self);
   FImplementationSection := TPImplementation.Create(Self);
   FInitializeSection := TPInitialize.Create(Self);
   FInterfaceSection := TPInterface.Create(Self, TPUses.Create);
   FNameSpace := ANameSpace;
+  if FWantTest then
+  begin
+    FTestCFile := TStringStream.Create('');
+    FTestCFile.WriteString(Format(CBasic, [FNameSpace.CIncludeName]));
+    FTestPascalFile := TStringStream.Create('');
+    FTestPascalFile.WriteString(Format(PBasic,[UnitName, UnitName, UnitName]));
+    FTestPascalBody := TStringList.Create;
+    FTestPascalBody.Add('begin');
+  end;
   ResolveFuzzyTypes;
   GenerateUnit;
+end;
+
+destructor TPascalUnit.Destroy;
+begin
+  if FWantTest then
+  begin
+    FTestPascalFile.Free;
+    FTestCFile.Free;
+    FTestPascalBody.Free;
+  end;
+  FFinalizeSection.Free;
+  FImplementationSection.Free;
+  FInitializeSection.Free;
+  FInterfaceSection.Free;
+
+  inherited Destroy;
 end;
 
 procedure TPascalUnit.ProcessConsts(AList: TList);
@@ -1744,6 +1833,17 @@ begin
   Result.Position:=0;
 end;
 
+procedure TPascalUnit.Finish;
+begin
+  if FWantTest then
+  begin
+    FTestPascalFile.WriteString(FTestPascalBody.Text);
+    FTestPascalFile.WriteString('end.');
+    FTestCFile.Position:=0;
+    FTestPascalFile.Position:=0;
+  end;
+end;
+
 { TPDeclarationList }
 
 function TPDeclarationList.GetDeclarations(AIndex: Integer): TPDeclaration;
@@ -1763,10 +1863,12 @@ end;
 
 { TgirPascalWriter }
 
-constructor TgirPascalWriter.Create(ANameSpaces: TgirNamespaces);
+constructor TgirPascalWriter.Create(ANameSpaces: TgirNamespaces; AWantTest: Boolean);
 begin
   FNameSpaces := ANameSpaces;
   FUnits := TList.Create;
+  FDefaultUnitExtension:='.pas';
+  FWantTest:=AWantTest;
 end;
 
 procedure TgirPascalWriter.GenerateUnits;
@@ -1774,16 +1876,23 @@ var
   i: Integer;
   FUnit: TPascalUnit;
 
+
 begin
   for i := 0 to FNameSpaces.Count-1 do
     begin
       WriteLn(Format('Converting %s', [FNameSpaces.NameSpace[i].NameSpace]));
-      FUnit := TPascalUnit.Create(FNameSpaces.NameSpace[i], False);
+      FUnit := TPascalUnit.Create(FNameSpaces.NameSpace[i], False, FWantTest);
       FUnit.ProcessConsts(FNameSpaces.NameSpace[i].Constants);
       FUnit.ProcessTypes(FNameSpaces.NameSpace[i].Types);
       FUnit.ProcessFunctions(FNameSpaces.NameSpace[i].Functions);
+      FUnit.Finish;
       FUnits.Add(FUnit);
-      FOnUnitWriteEvent(Self, FUnit.UnitName, FUnit.AsStream);
+      FOnUnitWriteEvent(Self, FUnit.UnitName+FDefaultUnitExtension, FUnit.AsStream);
+      if FWantTest then
+      begin
+        FOnUnitWriteEvent(Self, FUnit.UnitName+'_test'+FDefaultUnitExtension, FUnit.FTestPascalFile);
+        FOnUnitWriteEvent(Self, FUnit.UnitName+'_c_test.c', FUnit.FTestCFile);
+      end;
     end;
 end;
 

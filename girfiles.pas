@@ -59,32 +59,33 @@ uses girErrors, girTokens;
 
 procedure TgirFile.ParseNode(ANode: TDomNode);
 var
+  Node: TDomNode;
   NS: TgirNamespace;
   Includes: TList;
 begin
   if ANode.NodeName <> 'repository' then
     girError(geError, 'Not a Valid Document Type!');
 
-  ANode := Anode.FirstChild;
+  Node := Anode.FirstChild;
   Ns := nil;
   Includes := TList.Create;
 
-  while ANode <> nil do begin
-    case GirTokenNameToToken(ANode.NodeName) of
-      gtInclude: ParseIncludeNode(ANode, Includes);
+  while Node <> nil do begin
+    case GirTokenNameToToken(Node.NodeName) of
+      gtInclude: ParseIncludeNode(Node, Includes);
       gtNameSpace:
         begin
-          NS := TgirNamespace.CreateFromNamespaceNode(NameSpaces, ANode, Includes);
+          NS := TgirNamespace.CreateFromRepositoryNode(NameSpaces, ANode, Includes);
           girError(geDebug, 'Adding Namespace '+NS.NameSpace+' to NameSpaces');
           FNameSpaces.Add(NS);
           girError(geDebug, 'Added Namespace '+NS.NameSpace);
-          NS.ParseNode(ANode);
+          NS.ParseNode(Node);
         end;
       gtPackage, gtCInclude: ;// ignore for now
     else
-      girError(geDebug, 'Unknown Node Type for Reposiotory: '+ Anode.NodeName);
+      girError(geDebug, 'Unknown Node Type for Reposiotory: '+ node.NodeName);
     end;
-    ANode := ANode.NextSibling;
+    Node := Node.NextSibling;
   end;
 
 

@@ -38,6 +38,7 @@ type
     FOutPutDirectory : String;
     FFileToConvert: String;
     FOverWriteFiles: Boolean;
+    FWantTest: Boolean;
     procedure AddDefaultPaths;
     procedure AddPaths(APaths: String);
     procedure VerifyOptions;
@@ -45,7 +46,8 @@ type
 
     //callbacks
     function NeedGirFile(AGirFile: TObject; NamespaceName: String) : TXMLDocument;
-    procedure WritePascalFile(Sender: TObject;  AUnitName: String; AStream: TStringStream);
+    // AName is the whole name unit.pas or file.c
+    procedure WriteFile(Sender: TObject;  AName: String; AStream: TStringStream);
   protected
     procedure DoRun; override;
   public
@@ -110,14 +112,13 @@ begin
   end;
 end;
 
-procedure TGirConsoleConverter.WritePascalFile(Sender: TObject;
-  AUnitName: String; AStream: TStringStream);
+procedure TGirConsoleConverter.WriteFile(Sender: TObject; AName: String; AStream: TStringStream);
 var
   SStream: TFileStream;
   OutFileName: String;
 begin
   Inc(FWriteCount);
-  OutFileName:=FOutPutDirectory+LowerCase(AUnitName)+'.pas';
+  OutFileName:=FOutPutDirectory+LowerCase(AName);
   if not FileExists(OutFileName)
   or (FileExists(OutFileName) and FOverWriteFiles) then
   begin
@@ -152,8 +153,8 @@ begin
   girFile.ParseXMLDocument(Doc);
   Doc.Free;
 
-  Writer := TgirPascalWriter.Create(girFile.NameSpaces);
-  Writer.OnUnitWriteEvent:= @WritePascalFile;
+  Writer := TgirPascalWriter.Create(girFile.NameSpaces, FWantTest);
+  Writer.OnUnitWriteEvent:= @WriteFile;
   Writer.GenerateUnits;
 
   Writer.Free;
@@ -168,7 +169,7 @@ var
   ErrorMsg: String;
 begin
   // quick check parameters
-  ErrorMsg:=CheckOptions('hnp:o:i:w',['help','no-default','paths','output-directory', 'input', 'overwrite-files']);
+  ErrorMsg:=CheckOptions('hnp:o:i:wt',['help','no-default','paths','output-directory', 'input', 'overwrite-files', 'test']);
   if ErrorMsg<>'' then begin
     ShowException(Exception.Create(ErrorMsg));
     Terminate;
@@ -197,6 +198,8 @@ begin
 
   if HasOption('w', 'overwrite-files') then
     FOverWriteFiles:=True;
+
+  FWantTest := HasOption('t', 'test');
 
   VerifyOptions;
 
@@ -232,6 +235,7 @@ begin
   Writeln('      -n --no-default         /usr/share/gir-1.0 is not added as a search location for ');
   Writeln('                              needed .gir files.');
   Writeln('      -p --paths=             List of paths seperated by ":" to search for needed .gir files.');
+  Writeln('      -t --test               Creates a test program and a test c file per unit to verify struct sizes.');
   Writeln('');
 end;
 

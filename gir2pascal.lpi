@@ -23,6 +23,7 @@
     </BuildModes>
     <PublishOptions>
       <Version Value="2"/>
+      <DestinationDirectory Value="/tmp/publishedproject/"/>
       <IncludeFileFilter Value="*.(pas|pp|inc|lfm|lpr|lrs|lpi|lpk|sh|xml)"/>
       <ExcludeFileFilter Value="*.(bak|ppu|o|so);*~;backup"/>
     </PublishOptions>
@@ -30,7 +31,7 @@
       <local>
         <FormatVersion Value="1"/>
         <CommandLineParams Value="-i /usr/share/gir-1.0/Gtk-3.0.gir -o /tmp/gir-out -w"/>
-        <LaunchingApplication Use="True" PathPlusParams="/usr/bin/gnome-terminal -t 'Lazarus Run Output' -e '$(LazarusDir)/tools/runwait.sh $(TargetCmdLine)'"/>
+        <LaunchingApplication PathPlusParams="/usr/bin/gnome-terminal -t 'Lazarus Run Output' -e '$(LazarusDir)/tools/runwait.sh $(TargetCmdLine)'"/>
       </local>
     </RunParams>
     <Units Count="8">

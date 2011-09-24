@@ -34,7 +34,9 @@ type
 
   TgirNamespace = class(IgirParser)
   private
+    FCIncludeName: String;
     FConstants: TList;
+    FCPackageName: String;
     FFunctions: TList;
     FNameSpace: String;
     FOnlyImplied: Boolean;
@@ -75,9 +77,11 @@ type
     procedure ParseNode(ANode: TDomNode);
     procedure ParseSubNode(ANode: TDomNode); // generally do not use outside of TgirNameSpace
     constructor Create(AOwner:TObject; AImpliedNamespace: String);
-    constructor CreateFromNamespaceNode(AOwner:TObject; ANode: TDOMNode; AIncludes: TList);
+    constructor CreateFromRepositoryNode(AOwner:TObject; ANode: TDOMNode; AIncludes: TList);
     destructor Destroy; override;
     property NameSpace: String read FNameSpace;
+    property CIncludeName: String read FCIncludeName;
+    property CPackageName: String read FCPackageName;
     property RequiredNameSpaces: TList Read FRequiredNameSpaces;
     property SharedLibrary: String read FSharedLibrary;
     property Version: String read FVersion;
@@ -499,19 +503,39 @@ begin
   girError(geDebug, 'Creating Stub for namespace: '+ AImpliedNamespace);
 end;
 
-constructor TgirNamespace.CreateFromNamespaceNode(AOwner:TObject; ANode: TDOMNode; AIncludes: TList);
+constructor TgirNamespace.CreateFromRepositoryNode(AOwner:TObject; ANode: TDOMNode; AIncludes: TList);
+  procedure SetCInclude;
+  var
+    Child: TDomElement;
+  begin
+    Child := TDOMElement(ANode.FindNode('c:include name'));
+    if (Child <> nil) and Child.InheritsFrom(TDOMElement) then
+      FCIncludeName:= Child.GetAttribute('name');
+  end;
+  procedure SetPackage;
+  var
+    Child: TDOMElement;
+  begin
+    Child := TDOMElement(ANode.FindNode('package'));
+    if (Child <> nil) and Child.InheritsFrom(TDOMElement) then
+      FCPackageName:=Child.GetAttribute('name');
+  end;
+
 var
-  Node: TDOMElement absolute ANode;
+  Node: TDOMElement;
 begin
   FOwner := AOwner;
   if ANode = nil then
     girError(geError, 'expected namespace got nil');
-  if ANode.NodeName <> 'namespace' then
-    girError(geError, 'expected namespace got '+ANode.NodeName);
+  if ANode.NodeName <> 'repository' then
+    girError(geError, 'expected "repository" got '+ANode.NodeName);
+  Node := TDOMElement( ANode.FindNode('namespace') );
   FNameSpace:=Node.GetAttribute('name');
   FRequiredNameSpaces := AIncludes;
   FSharedLibrary:=Node.GetAttribute('shared-library');
   FVersion:=Node.GetAttribute('version');
+  SetCInclude;
+  SetPackage;
   girError(geDebug, Format('Creating namespace=%s Version=%s LibName=%s',[FNameSpace, FVersion, FSharedLibrary]));
 
   FConstants := TList.Create;

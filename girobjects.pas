@@ -43,6 +43,7 @@ type
     FCType: String;
     FDoc: String;
     FForwardDefinitionWritten: Boolean;
+    FHasFields: Boolean;
     FImpliedPointerLevel: Integer;
     FName: String;
     FObjectType: TGirObjectType;
@@ -265,9 +266,11 @@ type
 
   { TgirFieldsList }
 
-  TgirFieldsList = class(TFPList)
+  TgirFieldsList = class(TList)
   private
+    FHasFields: Boolean;
     function GetField(AIndex: Integer): TGirBaseType;
+    procedure Notify(Ptr: Pointer; Action: TListNotification); override;
   public
     property Field[AIndex: Integer]: TGirBaseType read GetField;
   end;
@@ -277,6 +280,7 @@ type
   TgirRecord = class(TGirBaseType)
   private
     FFields: TgirFieldsList;
+    function GetHasFields: Boolean;
   protected
     procedure HandleUnion(ANode: TDomNode);
     procedure HandleField(ANode: TDomNode);
@@ -285,6 +289,7 @@ type
     constructor Create(AOwner: TObject; ANode: TDomNode); override;
     destructor Destroy; override;
     property Fields: TgirFieldsList read FFields;
+    property HasFields: Boolean read GetHasFields;
   end;
 
   { TgirUnion }
@@ -413,6 +418,7 @@ constructor TgirBitField.Create(AOwner: TObject; ANode: TDomNode);
 begin
   inherited Create(AOwner, ANode);
   FObjectType:=otBitfield;
+  FHasFields:=True;
 end;
 
 { TgirFieldsList }
@@ -420,6 +426,15 @@ end;
 function TgirFieldsList.GetField(AIndex: Integer): TGirBaseType;
 begin
   Result := TGirBaseType(Items[AIndex]);
+end;
+
+procedure TgirFieldsList.Notify(Ptr: Pointer; Action: TListNotification);
+var
+  gir: TGirBaseType absolute Ptr;
+begin
+  if FHasFields then
+    Exit;
+  FHasFields:= gir.ObjectType in [otTypeParam, otCallback, otArray];
 end;
 
 { TgirParamList }
@@ -625,6 +640,10 @@ end;
 
 
 
+function TgirRecord.GetHasFields: Boolean;
+begin
+  Result := Fields.FHasFields;
+end;
 
 procedure TgirRecord.HandleUnion(ANode: TDomNode);
 var
