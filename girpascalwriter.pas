@@ -185,7 +185,7 @@ type
     FNameSpace: TgirNamespace;
     FWantTest: Boolean;
     ProcessLevel: Integer; //used to know if to write forward definitions
-    FTestCFile: TStringStream;
+    //FTestCFile: TStringStream;
     FTestPascalFile: TStringStream;
     FTestPascalBody: TStringList;
     function GetUnitName: String;
@@ -237,7 +237,7 @@ type
 
     procedure ProcessType(AType: TGirBaseType; AForceWrite: Boolean = False);
     procedure ResolveFuzzyTypes;
-    procedure AddTestType(APascalName: String; ACName: String);
+    procedure AddTestType(AGType: TgirGType);
   public
     constructor Create(ANameSpace: TgirNamespace; ALinkDynamic: Boolean; AWantTest: Boolean);
     destructor Destroy; override;
@@ -559,14 +559,17 @@ end;
 
 procedure TPascalUnit.ProcessType(AType: TGirBaseType; AForceWrite: Boolean = False);
 begin
-  if (AType = nil) or (AType.Owner <> NameSpace) then
-    Exit; // it's written in another Namespace
+  if (AType = nil)  then
+    Exit;
 
   if (AType.ObjectType = otFuzzyType) and (TgirFuzzyType(AType).ResolvedType <> nil) then
   begin
     TgirFuzzyType(AType).ResolvedType.ImpliedPointerLevel := AType.ImpliedPointerLevel;
     AType := TgirFuzzyType(AType).ResolvedType;
   end;
+
+  if (AType.Owner <> NameSpace) then
+    Exit; // it's written in another Namespace
 
   if (AType.CType = '') then //(AType.Name = '') then
   begin
@@ -624,8 +627,8 @@ begin
     WriteLn('Unknown Type: ', AType.ClassName);
     Halt;
   end; // case
-  if (AType.InheritsFrom(TgirRecord)) and (TgirRecord(AType).HasFields) then
-    AddTestType(AType.TranslatedName, AType.CType);
+  if (AType.InheritsFrom(TgirGType)) then // and (TgirGType(AType).HasFields) then
+    AddTestType((TgirGType(AType)));//, AType.TranslatedName, AType.CType, TgirGType(AType).GetTypeFunction);
 
   AType.Writing:=msWritten;
   Dec(ProcessLevel);
@@ -655,41 +658,49 @@ begin
     end;
 end;
 
-procedure TPascalUnit.AddTestType(APascalName: String; ACName: String);
+procedure TPascalUnit.AddTestType(AGType: TgirGType);
 const
-  CFunction = 'int GetSizeOf_%s(void)'+
-              '{  return sizeof(%s); };'+LineEnding;
-  PImport = 'function GetSizeOf_%s: LongInt; cdecl; external;'+LineEnding;
   PTest = 'procedure Test_%s;'                                                         +LineEnding+
           'var'                                                                        +LineEnding+
           '  PSize: Integer;'                                                          +LineEnding+
           '  CSize: Integer;'                                                          +LineEnding+
+          '  CClassSize: Integer;'                                                     +LineEnding+
           'begin'                                                                      +LineEnding+
           '  PSize := SizeOf(%s);'                                                     +LineEnding+
-          '  CSize := GetSizeOf_%s;'                                                   +LineEnding+
+          '  CSize := GTypeSize(%s, CClassSize);'                                      +LineEnding+
           '  if CSize = PSize then'                                                    +LineEnding+
           '    WriteLn(''%s Matches C Size: '',CSize)'                                 +LineEnding+
           '  else'                                                                     +LineEnding+
-          '    WriteLn(''%s size ('',PSize,'') does NOT match %s size ('',CSize,'')'');' +LineEnding+
-          'end;'                                                                       +LineEnding;
+          '    WriteLn(''%s size ('',PSize,'') does NOT match %s size ('',CSize,'')''); ' +LineEnding+
+          '%send;'                                                                       +LineEnding;
+  PTest2 ='  PSize := SizeOf(%s);'                                                +LineEnding+
+          '  if CClassSize = PSize then'                                               +LineEnding+
+          '    WriteLn(''%s Matches C Size: '',CSize)'                            +LineEnding+
+          '  else'                                                                     +LineEnding+
+          '    WriteLn(''%s size ('',PSize,'') does NOT match %s size ('',CSize,'')'');' +LineEnding;
+
 var
-  CF: String;
-  PI: String;
   PT: String;
+  PT2: String = '';
+  Cls: TgirClass absolute AGType;
 begin
   if not FWantTest then
     Exit;
-  if (ACName = '') or (ACName[1] = '_') then // we skip private types
+  if (AGType.CType = '') then //or (ACName[1] = '_') then // we skip private types
     Exit;
+  ResolveTypeTranslation(AGType);
 
-  CF := Format(CFunction,[ACName, ACName]);
-  PI := Format(PImport,  [ACName]);
-  PT := Format(PTest,    [ACName, APascalName, ACName, APascalName, APascalName, ACName]);
+  if AGType.GetTypeFunction = '' then exit;
 
-  FTestCFile.WriteString(CF); // c sizeof wrapper
-  FTestPascalFile.WriteString(PI); // c import
+  if AGType.InheritsFrom(TgirClass) and (Cls.ClassStruct <> nil) then
+  begin
+    ResolveTypeTranslation(Cls.ClassStruct);
+    PT2 := Format(PTest2, [cls.ClassStruct.TranslatedName, cls.ClassStruct.TranslatedName, cls.ClassStruct.TranslatedName, cls.ClassStruct.CType] );
+  end;
+  PT := Format(PTest, [AGType.CType, AGType.TranslatedName, AGType.GetTypeFunction, AGType.TranslatedName, AGType.TranslatedName, AGType.CType, PT2]);
+
   FTestPascalFile.WriteString(PT); // pascal testproc
-  FTestPascalBody.Add(Format('Test_%s;',[ACName])); //call pascal testproc
+  FTestPascalBody.Add(Format('Test_%s;',[AGType.CType])); //call pascal testproc
 end;
 
 function TPascalUnit.WantTypeSection: TPDeclarationType;
@@ -763,7 +774,7 @@ begin
   if ResolvedForName = '' then
     begin
 
-      CType := NameSpace.LookupTypeByName('', AItem.ForType.CType);
+      //CType := NameSpace.LookupTypeByName('', AItem.ForType.CType);
       if CType <> nil then
          ResolvedForName := CType.TranslatedName;
 
@@ -775,8 +786,10 @@ begin
 
   WriteForwardDefinition(AItem);
 
+  AItem.TranslatedName:=MakePascalTypeFromCType(AItem.CType);
+
   if AItem.Writing < msWritten then
-    WantTypeSection.Lines.Add(IndentText(MakePascalTypeFromCType(AItem.CType)+' = '+ ResolvedForName+';' ,2,0));
+    WantTypeSection.Lines.Add(IndentText(Aitem.TranslatedName+' = '+ ResolvedForName+';' ,2,0));
 end;
 
 procedure TPascalUnit.HandleCallback(AItem: TgirCallback);
@@ -914,6 +927,7 @@ begin
   TypeSect.Lines.Add(IndentText('{ opaque type }',4,0));
   //TypeSect.Lines.Add(IndentText('Unknown: Pointer;',4,0)); // to prevent crashes of the compiler
   TypeSect.Lines.Add(IndentText('end;',2,1));
+  WriteLn('Wrote Opaque Type Name = ', AItem.Name,' CType = ', AItem.CType);
 
 end;
 
@@ -1722,10 +1736,21 @@ end;
 
 constructor TPascalUnit.Create(ANameSpace: TgirNamespace; ALinkDynamic: Boolean; AWantTest: Boolean);
 const
-  CBasic = '#include <%s>'+LineEnding;
+  //CBasic = '#include <%s>'+LineEnding;
   PBasic = 'program %s_test;'+LineEnding+
-           '{$LINK %s_c_test}'+LineEnding+
-           'uses %s;'+LineEnding;
+           //'{$LINK %s_c_test}'+LineEnding+
+           '{$MODE OBJFPC}'+LineEnding+
+           'uses GLib2, GObject2, %s;'+LineEnding;
+  GTypeSize = 'function GTypeSize(AType: TGType; out AClassSize: Integer): Integer;'+LineEnding+
+              'var'                                       +LineEnding+
+              '  Query: TGTypeQuery;'                     +LineEnding+
+              'begin'                                     +LineEnding+
+              '  g_type_query(AType, @Query);'            +LineEnding+
+              '  AClassSize := Query.Class_Size;'         +LineEnding+
+              '  GTypeSize := Query.instance_size;'       +LineEnding+
+              '  if GTypeSize = 32767 then GTypeSize := 0;'       +LineEnding+
+              '  if AClassSize = 32767 then AClassSize := 0;'       +LineEnding+
+              'end;'+LineEnding;
 begin
   ProcessLevel:=0;
   FWantTest:=AWantTest;
@@ -1737,12 +1762,15 @@ begin
   FNameSpace := ANameSpace;
   if FWantTest then
   begin
-    FTestCFile := TStringStream.Create('');
-    FTestCFile.WriteString(Format(CBasic, [FNameSpace.CIncludeName]));
+    //FTestCFile := TStringStream.Create('');
+    //FTestCFile.WriteString(Format(CBasic, [FNameSpace.CIncludeName]));
     FTestPascalFile := TStringStream.Create('');
     FTestPascalFile.WriteString(Format(PBasic,[UnitName, UnitName, UnitName]));
+    FTestPascalFile.WriteString(GTypeSize);
     FTestPascalBody := TStringList.Create;
     FTestPascalBody.Add('begin');
+    FTestPascalBody.Add(' g_type_init();');
+
   end;
   ResolveFuzzyTypes;
   GenerateUnit;
@@ -1753,7 +1781,7 @@ begin
   if FWantTest then
   begin
     FTestPascalFile.Free;
-    FTestCFile.Free;
+    //FTestCFile.Free;
     FTestPascalBody.Free;
   end;
   FFinalizeSection.Free;
@@ -1878,7 +1906,7 @@ begin
   Str.WriteString(IndentText('unit '+ UnitName+';',0,2));
   Str.WriteString(IndentText('{$MODE OBJFPC}{$H+}',0,2));
   Str.WriteString(IndentText('{$PACKRECORDS C}',0,1));
-  //Str.WriteString(IndentText('{$BITPACKING ON}',0,1)); not needed since we set records that need is bitpacked
+  //Str.WriteString(IndentText('{$BITPACKING ON}',0,1)); not needed since we set records that need it to bitpacked
   //Str.WriteString(IndentText('{$CALLING CDECL}',0,2));
   Str.WriteString(IndentText('{$MODESWITCH DUPLICATELOCALS+}',0,2));
 
@@ -1907,7 +1935,7 @@ begin
   begin
     FTestPascalFile.WriteString(FTestPascalBody.Text);
     FTestPascalFile.WriteString('end.');
-    FTestCFile.Position:=0;
+    //FTestCFile.Position:=0;
     FTestPascalFile.Position:=0;
   end;
 end;
@@ -1959,7 +1987,7 @@ begin
       if FWantTest then
       begin
         FOnUnitWriteEvent(Self, FUnit.UnitName+'_test'+FDefaultUnitExtension, FUnit.FTestPascalFile);
-        FOnUnitWriteEvent(Self, FUnit.UnitName+'_c_test.c', FUnit.FTestCFile);
+        //FOnUnitWriteEvent(Self, FUnit.UnitName+'_c_test.c', FUnit.FTestCFile);
       end;
     end;
 end;

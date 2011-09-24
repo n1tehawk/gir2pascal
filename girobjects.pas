@@ -71,7 +71,6 @@ type
 
   TgirNativeTypeDef = class(TGirBaseType)
   private
-    FPAs: String;
     FPascalName: String;
   public
     constructor Create(AOwner:TObject; AGType: String; APascalCTypeName: String);
@@ -95,9 +94,11 @@ type
   TgirAlias = class(TGirBaseType)
   private
     FForType: TGirBaseType;
+    function GetForType: TGirBaseType;
   public
     constructor Create(AOwner: TObject; ANode: TDomNode); override;
-    property ForType: TGirBaseType read FForType;
+    constructor Create(AOwner: TObject; AName, ACType, ATranslatedName: String);
+    property ForType: TGirBaseType read GetForType write FForType;
   end;
 
   { TgirTypeParam }
@@ -270,6 +271,7 @@ type
   private
     FHasFields: Boolean;
     function GetField(AIndex: Integer): TGirBaseType;
+  protected
     procedure Notify(Ptr: Pointer; Action: TListNotification); override;
   public
     property Field[AIndex: Integer]: TGirBaseType read GetField;
@@ -324,9 +326,15 @@ type
   { TgirClass }
 
   { TgirClassStruct }
+  TgirClass = class;
 
   TgirClassStruct = class(TgirGType)
+  private
+    FIsClassStructFor: TgirClass;
+    function GetIsClassStructFor: TgirClass;
+  public
     constructor Create(AOwner: TObject; ANode: TDomNode); override;
+    property IsClassStructFor: TgirClass read GetIsClassStructFor;
 
   end;
 
@@ -351,7 +359,7 @@ type
   { TgirInterface }
 
   TgirInterface = class(TgirClass)
-  protected
+  public
     constructor Create(AOwner: TObject; ANode: TDomNode); override;
     procedure ParseNode(ANode: TDomNode; ANodeType: TGirToken); override;
   end;
@@ -366,10 +374,30 @@ uses girNameSpaces, girErrors;
 
 { TgirClassStruct }
 
+function TgirClassStruct.GetIsClassStructFor: TgirClass;
+begin
+  Result := nil;
+  if FIsClassStructFor.ObjectType = otFuzzyType then
+  begin
+    if TgirFuzzyType(FIsClassStructFor).ResolvedType <> nil then
+      FIsClassStructFor := TgirClass(TgirFuzzyType(FIsClassStructFor).ResolvedType);
+  end;
+  Result := FIsClassStructFor;
+end;
+
 constructor TgirClassStruct.Create(AOwner: TObject; ANode: TDomNode);
+var
+  IsClassForName: String;
 begin
   inherited Create(AOwner, ANode);
   FObjectType:=otClassStruct;
+  IsClassForName:= (ANode as TDOMElement).GetAttribute('glib:is-gtype-struct-for');
+  if IsClassForName <> '' then
+  begin
+    FIsClassStructFor := TgirClass((Owner as TgirNamespace).LookupTypeByName(IsClassForName, '', True));
+    if (FIsClassStructFor <> nil) and (FIsClassStructFor.ObjectType = otClass) then
+      FIsClassStructFor.FClassStruct := Self;
+  end;
 end;
 
 { TgirConstructor }
@@ -601,7 +629,6 @@ end;
 constructor TgirArray.Create(AOwner: TObject; ANode: TDomNode);
 var
   Node: TDomELement;
-  Tmp: String;
 begin
   inherited Create(AOwner, ANode);
   Node := TDomElement(ANode.FindNode('type'));
@@ -656,14 +683,10 @@ end;
 procedure TgirRecord.HandleField(ANode: TDomNode);
 var
   Node: TDOMNode;
-  attr: TDomNode;
-  Attrs: TDOMNamedNodeMap;
-  Item: TGirBaseType;
 begin
   Node := ANode.FirstChild;
   while Node <> nil do
   begin
-    Attrs := ANode.Attributes;
     case GirTokenNameToToken(Node.NodeName) of
       gtDoc:;
       gtType: FFields.Add(TgirTypeParam.Create(Owner, ANode));
@@ -748,8 +771,6 @@ begin
 end;
 
 function TgirTypeParam.GetPointerLevel: Integer;
-var
-  i: Integer;
 begin
   Result := FPointerLevel;
 end;
@@ -1021,6 +1042,13 @@ end;
 
 { TgirAlias }
 
+function TgirAlias.GetForType: TGirBaseType;
+begin
+  if (FForType <> nil) and (FForType.ObjectType = otFuzzyType) and (TgirFuzzyType(FForType).ResolvedType <> nil) then
+    FForType := TgirFuzzyType(FForType).ResolvedType;
+  Result := FForType;
+end;
+
 constructor TgirAlias.Create(AOwner: TObject; ANode: TDomNode);
 var
   Node: TDOMElement;
@@ -1028,6 +1056,16 @@ begin
   inherited Create(AOwner, ANode);
   Node := TDomELement(ANode.FindNode('type'));
   FForType := TgirNamespace(Owner).LookupTypeByName(Node.GetAttribute('name'), Node.GetAttribute('c:type'));
+  FObjectType:=otAlias;
+end;
+
+constructor TgirAlias.Create(AOwner: TObject; AName, ACType,
+  ATranslatedName: String);
+begin
+  FOwner := AOwner;
+  FName:=AName;
+  FCType:=ACType;
+  FTranslatedName:=ATranslatedName;
   FObjectType:=otAlias;
 end;
 

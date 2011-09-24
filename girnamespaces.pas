@@ -69,8 +69,9 @@ type
     procedure HandleClass(ANode: TDomNode); // one step above GType. Is the object structure and it's methods. ClassStruct is like the VMT
     procedure HandleInterface(ANode: TDomNode);
     procedure AddGLibBaseTypes;
+    procedure AddType(AType: TGirBaseType);
   public
-    function LookupTypeByName(AName: String; const ACType: String; const SearchOnly: Boolean = False): TGirBaseType;
+    function LookupTypeByName(AName: String; const ACType: String; SearchOnly: Boolean = False): TGirBaseType;
     function ResolveFuzzyType(AFuzzyType: TgirFuzzyType): TGirBaseType;
     function UsesGLib: Boolean;
     procedure ResolveFuzzyTypes; // called after done
@@ -185,6 +186,7 @@ begin
     ParseSubNode(ANode);
     ANode := ANode.NextSibling;
   end;
+  ResolveFuzzyTypes;
 end;
 
 procedure TgirNamespace.SetOnNeedGirFile(AValue: TgirNeedGirFileEvent);
@@ -197,7 +199,7 @@ function TgirNamespace.AddFuzzyType(AName: String; ACType: String
   ): TGirBaseType;
 begin
   Result := TgirFuzzyType.Create(Self, AName, ACType);
-  FTypes.Add(AName, Result);
+  AddType(Result);
   FUnresolvedTypes.Add(Result);
 end;
 
@@ -298,7 +300,7 @@ var
   Item: TgirClassStruct;
 begin
   Item := TgirClassStruct.Create(Self, ANode);
-  FTypes.Add(Item.Name, Item);
+  AddType(Item);
 end;
 
 procedure TgirNamespace.HandleClass(ANode: TDomNode);
@@ -306,7 +308,7 @@ var
   Item: TgirClass;
 begin
   Item := TgirClass.Create(Self, ANode);
-  FTypes.Add(Item.Name, Item);
+  AddType(Item);
 end;
 
 procedure TgirNamespace.HandleInterface(ANode: TDomNode);
@@ -314,22 +316,41 @@ var
   Item: TgirInterface;
 begin
   Item := TgirInterface.Create(Self, ANode);
-  FTypes.Add(Item.Name, Item);
+  AddType(Item);
 end;
 
 procedure TgirNamespace.AddGLibBaseTypes;
-  procedure AddNativeTypeDef(GType: String; PascalCName: String);
+  function AddNativeTypeDef(GType: String; PascalCName: String; TranslatedName: String): TgirNativeTypeDef;
   var
     NativeType: TgirNativeTypeDef;
   begin
     NativeType:= TgirNativeTypeDef.Create(Self, GType, PascalCName);
+    if TranslatedName <> '' then
+      NativeType.TranslatedName:=TranslatedName;
+    NativeType.ImpliedPointerLevel:=3;
     Types.Add(NativeType.Name, NativeType);
+    Result := NativeType;
+
   end;
 var
   i: Integer;
 begin
   for i := 0 to CTypesMax-1 do
-    AddNativeTypeDef(TypesGTypes[i], TypesPascalCTypes[i]);
+    AddNativeTypeDef(TypesGTypes[i], TypesPascalCTypes[i], '');
+end;
+
+procedure TgirNamespace.AddType(AType: TGirBaseType);
+var
+  PrevFound: TGirBaseType = nil;
+begin
+  PrevFound := TGirBaseType(FTypes.Find(AType.Name));
+  if (PrevFound <> nil) and (PrevFound.ObjectType = otFuzzyType)  then
+  begin
+    (PrevFound as TgirFuzzyType).ResolvedType := AType;
+  end;
+  //if PrevFound <> nil then WriteLn('Found Name Already Added: ', AType.Name, ' ', PrevFound.ObjectType, ' ', AType.ObjectType);
+  if PrevFound = nil then
+    FTypes.Add(AType.Name, AType);
 end;
 
 procedure TgirNamespace.ResolveFuzzyTypes;
@@ -337,17 +358,23 @@ var
   i: Integer;
   FuzzyI: Integer;
   Fuzzy: TgirFuzzyType;
+  FuzzyP: Pointer absolute Fuzzy;
   Tmp: TGirBaseType;
+  StillFuzzy: TList;
+  Current: TGirBaseType;
+  ReqNS: TgirNamespace;
 begin
   i:= 0;
   FuzzyI := 0;
   Fuzzy := nil;
+  StillFuzzy := TList.Create;
   while (i < FTypes.Count) or (Fuzzy <> nil) do
   begin
     // make our loop safe
     if i >= FTypes.Count then
     begin
       i := FuzzyI+1;
+      StillFuzzy.Add(Fuzzy);
       Fuzzy := nil;
       continue;
     end;
@@ -378,6 +405,25 @@ begin
     inc(i);
   end;
 
+  // if the types are still fuzzy then we will search used namespaces for what we want
+  for FuzzyP in StillFuzzy do //FuzzyP is Fuzzy absolute
+  begin
+    if Fuzzy.ResolvedType <> nil then
+      continue;
+    for i := 0 to RequiredNameSpaces.Count-1 do
+    begin
+      ReqNS := TgirNamespace(RequiredNameSpaces.Items[i]);
+      Current := ReqNS.LookupTypeByName(Fuzzy.Name, '', True);
+      if Current <> nil then
+      begin
+        if (Current.ObjectType = otFuzzyType) and (TgirFuzzyType(Current).ResolvedType <> nil) then
+          Current := TgirFuzzyType(Current).ResolvedType;
+        Fuzzy.ResolvedType := Current;
+        Break;
+      end;
+    end;
+  end;
+  StillFuzzy.Free;
 end;
 
 procedure TgirNamespace.ParseSubNode(ANode: TDomNode);
@@ -397,10 +443,9 @@ begin
     else
       girError(geError, 'Unknown NodeType: '+ANode.NodeName);
   end;
-  ResolveFuzzyTypes;
 end;
 
-function TgirNamespace.LookupTypeByName(AName: String; const ACType: String; const SearchOnly: Boolean = False): TGirBaseType;
+function TgirNamespace.LookupTypeByName(AName: String; const ACType: String; SearchOnly: Boolean = False): TGirBaseType;
   function StripPointers(ACPointeredType: String; PtrLevel: PInteger = nil): String;
   var
     i: Integer;
@@ -416,19 +461,23 @@ function TgirNamespace.LookupTypeByName(AName: String; const ACType: String; con
   end;
 
 var
-  ReqNS,
   NS: TgirNamespace;
   NSString: String;
   FPos: Integer;
-  i: Integer;
-  Current: TGirBaseType;
   PointerLevel: Integer = 0;
   PlainCType: String;
 begin
   Result := nil;
   NS := Self;
-  FPos := Pos('.', AName);
+  // some basic fixes
   PlainCType:=StringReplace(StripPointers(ACType, @PointerLevel), ' ', '_', [rfReplaceAll]);
+  if (PlainCType = 'gchar') or (PlainCType = 'guchar') or (PlainCType = 'char') then
+    AName := 'GLib.utf8';
+
+  if (PlainCType = 'GType')  {or (AName = 'Type')} or (AName = 'GType')then
+    AName := 'GLib.Type';
+
+  FPos := Pos('.', AName);
 
   if FPos > 0 then  // type includes namespace "NameSpace.Type"
   begin
@@ -439,34 +488,14 @@ begin
     AName := Copy(AName, FPos+1, Length(AName));
   end;
 
-  // some basic fixes
-  if PlainCType = 'gchar' then
-    AName := 'utf8';
-
-  if PlainCType = 'GType' then
-    AName := 'Type';
+  if NS <> Self then SearchOnly:=True;
 
   Result := TGirBaseType(NS.Types.Find(AName));
   if (Result <> nil) and (Result.ObjectType = otFuzzyType) and (TgirFuzzyType(Result).ResolvedType <> nil) then
     Result := TgirFuzzyType(Result).ResolvedType;
 
-  if (Result = nil) and not SearchOnly then
-  begin
-    for i := 0 to NS.RequiredNameSpaces.Count-1 do
-    begin
-      ReqNS := TgirNamespace(NS.RequiredNameSpaces.Items[i]);
-      Current := ReqNS.LookupTypeByName(AName, ACType, True);
-      if Current <> nil then
-      begin
-        if (Current.ObjectType = otFuzzyType) and (TgirFuzzyType(Current).ResolvedType <> nil) then
-          Current := TgirFuzzyType(Current).ResolvedType;
-        Result := Current;
-        Break;
-      end;
-    end;
-    if Result = nil then
+  if (Result = nil) and Not SearchOnly then
       Result := NS.AddFuzzyType(AName, ACType);
-  end;
   if Result <> nil then
     Result.ImpliedPointerLevel:=PointerLevel;
 end;
