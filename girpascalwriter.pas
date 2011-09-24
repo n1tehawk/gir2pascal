@@ -925,7 +925,7 @@ begin
   TypeSect.Lines.Add('  { '+ AItem.CType+' }');
   TypeSect.Lines.Add(IndentText(AItem.TranslatedName +' = record',2,0));
   TypeSect.Lines.Add(IndentText('{ opaque type }',4,0));
-  //TypeSect.Lines.Add(IndentText('Unknown: Pointer;',4,0)); // to prevent crashes of the compiler
+  TypeSect.Lines.Add(IndentText('Unknown: Pointer;',4,0)); // to prevent crashes of the compiler
   TypeSect.Lines.Add(IndentText('end;',2,1));
   WriteLn('Wrote Opaque Type Name = ', AItem.Name,' CType = ', AItem.CType);
 
