@@ -217,7 +217,7 @@ type
     procedure WriteFunctionTypeAndReturnType(AItem: TgirFunction; out AFunctionType, AFunctionReturnType: String);
     function WriteFunctionParams(AParams: TgirParamList; AArgs: PString = nil): String;
     function WriteFunction(AFunction: TgirFunction; AItem: TGirBaseType; AIsMethod: Boolean; AWantWrapperForObject: Boolean; AFunctionList: TStrings; AExistingUsedNames: TStringList = nil): String;
-    function WriteParamAsString(AParam: TgirTypeParam; AIndex: Integer; AFirstParam: PString = nil; AExistingUsedNames: TStringList = nil): String;
+    function WriteParamAsString(AParam: TgirTypeParam; AIndex: Integer;  out ABitSizeSpecified: Boolean; AFirstParam: PString = nil; AExistingUsedNames: TStringList = nil): String;
     function WriteRecord(ARecord: TgirRecord; ABaseIndent: Integer = 0; AIsUnion: Boolean = False): String;
     function WriteUnion(AUnion: TgirUnion; ASkipRecordName: Boolean; ABaseIndent: Integer = 0): String;
     function ParenParams(const AParams: String; const AForceParens: Boolean = False): String;
@@ -1011,6 +1011,41 @@ var
   ParentType: String ='';
   UsedNames: TStringList;
   WrittenFields: Integer;
+  PackedBitsFieldCount: Integer = 0;
+  PackedBits: TStringList = nil;
+
+
+  function HasPackedBitfield: Boolean;
+  begin
+    HasPackedBitfield := PackedBits <> nil;
+  end;
+
+  procedure PackedBitsAddEntry (AEntry: String); // creates a new type to hold the packed bits
+  const
+    BitType = '  %sBitfield%d = bitpacked record';
+  var
+    BitEntry: String;
+  begin
+    if PackedBits = nil then
+    begin
+      PackedBits := TStringList.Create;
+      PackedBits.Add(Format(BitType,[AItem.TranslatedName, PackedBitsFieldCount]));
+      BitEntry := Format('    Bitfield%d : %sBitfield%d; { auto generated type }', [PackedBitsFieldCount, AItem.TranslatedName, PackedBitsFieldCount]);
+      TypeDecl.Add(BitEntry);
+      Inc(PackedBitsFieldCount);
+    end;
+    // now packed bits is assigned
+    PackedBits.Add(Format('    %s;', [AEntry]));
+  end;
+
+  procedure EndPackedBits;
+  begin
+    if PackedBits = nil then
+      Exit;
+    PackedBits.Add('  end;');
+    WantTypeSection.Lines.AddStrings(PackedBits);
+    FreeAndNil(PackedBits);
+  end;
 
   function GetTypeForProperty(AProperty: TgirProperty; out SetFound: Boolean): String;
   var
@@ -1085,28 +1120,35 @@ var
     Result := Format(Prop, [Comment, SanitizeName(AProperty.Name, UsedNames), AType, ReadFunc, WriteProc  ]);
   end;
 
-  procedure AddField(AParam: TgirTypeParam);
+  function AddField(AParam: TgirTypeParam): Boolean; // returns True if a bitsized param was used or false if it wasn't.
   var
     Param: String;
+    ParamIsBitSized: Boolean;
   begin
     ResolveTypeTranslation(AParam.VarType);
+    AddField := False;
+
+    // this is for object inheritance. a struct conatins the parent as the first field so we must remove it since our object inherits it already
     Inc(WrittenFields);
     if (WrittenFields = 1) and (AObjectType = gtClass) and (TgirClass(AItem).ParentClass <> nil) then
     begin
       Exit;
     end;
 
-    Param := WriteParamAsString(AParam,i, nil, UsedNames);
-    //if Pos('destroy_:', Param) > 0 then
-    //  Param := StringReplace(Param, 'destroy_', 'destroy_f', [rfReplaceAll]);
-    TypeDecl.Add(IndentText(Param+';',4,0))
+    Param := WriteParamAsString(AParam,i, ParamIsBitSized, nil, UsedNames);
 
+    if ParamIsBitSized then
+      PackedBitsAddEntry(Param)
+    else
+      TypeDecl.Add(IndentText(Param+';',4,0));
+    AddField := ParamIsBitSized;
   end;
 
-  procedure HandleFieldType(Field: TGirBaseType; AFirstPass: Boolean);
+  procedure HandleFieldType(Field: TGirBaseType; AFirstPass: Boolean; out AddedBitSizedType: Boolean);
   var
     SetFound: Boolean;
   begin
+    AddedBitSizedType:=False;
     // FIRST PASS
     if AFirstPass then
     begin
@@ -1136,7 +1178,7 @@ var
     begin
       case Field.ObjectType of
        otArray,
-       otTypeParam: AddField(TgirTypeParam(Field));
+       otTypeParam: AddedBitSizedType := AddField(TgirTypeParam(Field));
        otCallback : TypeDecl.Add(IndentText(WriteCallBack(TgirCallback(Field),True, UsedNames),4,0));
        otUnion    :
             begin
@@ -1186,6 +1228,7 @@ var
 
 var
   TypeSect: TPDeclarationType;
+  AddedBitSizedType: Boolean;
 begin
   if AItem.CType = '' then
     Exit;
@@ -1221,15 +1264,18 @@ begin
 
   // two passes to process the fields last for naming reasons first for methods/properties second for fields
   for i := 0 to Aitem.Fields.Count-1 do
-    HandleFieldType(AItem.Fields.Field[i], True);
-  if AItem.CType <> 'GInitiallyUnowned' then // empty type GInitiallyUnowned is empty and aliased to GObject which causes object introspection to add the types again since it's empty...how many places does that happen...
+    HandleFieldType(AItem.Fields.Field[i], True, AddedBitSizedType);
+  if AItem.CType <> 'GInitiallyUnowned' then // empty type GInitiallyUnowned is empty and aliased to GObject which causes
+                                             // object introspection to add the types again which causes size mismatches
+                                             // since it's supposed to be empty...how many places does that happen...
   begin
     WrittenFields:=0;
-    for i := 0 to Aitem.Fields.Count-1 do
-      HandleFieldType(AItem.Fields.Field[i], False);
+    for i := 0 to Aitem.Fields.Count-1 do begin
+      HandleFieldType(AItem.Fields.Field[i], False, AddedBitSizedType);
+      if (not AddedBitSizedType and HasPackedBitfield) or (i = AItem.Fields.Count-1) then
+        EndPackedBits;
+    end;
   end;
-
-
 
   if TypeFuncs.Count > 0 then
     TypeDecl.AddStrings(TypeFuncs);
@@ -1383,13 +1429,14 @@ function TPascalUnit.WriteFunctionParams(AParams: TgirParamList; AArgs: PString 
 var
   i: Integer;
   ArgName: String;
+  Dummy: Boolean;
 begin
   Result := '';
   if AArgs <> nil then
     AArgs^ := '';
   for i := 0 to AParams.Count-1 do
     begin
-      Result := Result+WriteParamAsString(AParams.Param[i], i, @ArgName);
+      Result := Result+WriteParamAsString(AParams.Param[i], i, Dummy, @ArgName);
       if i < AParams.Count-1 then
       begin
         Result := Result +'; ';
@@ -1454,13 +1501,14 @@ begin
     end;
 end;
 
-function TPascalUnit.WriteParamAsString(AParam: TgirTypeParam; AIndex: Integer; AFirstParam: PString = nil; AExistingUsedNames: TStringList = nil): String;
+function TPascalUnit.WriteParamAsString(AParam: TgirTypeParam; AIndex: Integer; out ABitSizeSpecified: Boolean; AFirstParam: PString = nil; AExistingUsedNames: TStringList = nil): String;
 var
   PT: String;
   PN: String;
   IsArray: Boolean;
   AnArray: TgirArray absolute AParam;
 begin
+  ABitSizeSpecified:=False;
   if AParam.VarType = nil then
   begin
     // is a varargs param
@@ -1495,6 +1543,7 @@ begin
 
    if AParam.Bits > 0 then
   begin
+    ABitSizeSpecified:=True;
     case AParam.Bits of
       //16: PT := 'guint16 { changed from '+PT+' to accomodate 16 bitsize requirement }';
       //32: PT := 'guint32 { changed from '+PT+' to accomodate 32 bitsize requirement }';
@@ -1508,10 +1557,6 @@ begin
   end;
   Result := PN +': '+PT;
 
-
-
-
-
   ProcessType(AParam.VarType, AParam.PointerLevel = 0); // will skip if written
 end;
 
@@ -1522,6 +1567,7 @@ var
   Field: TGirBaseType;
   UseName: String;
   Symbol: String;
+  Dummy: Boolean;
 begin
   TypeDecl := TStringList.Create;
   TypeDecl.Add('');
@@ -1546,7 +1592,7 @@ begin
       Field := ARecord.Fields.Field[i];
       case Field.ObjectType of
         otArray,
-        otTypeParam: TypeDecl.Add(IndentText(WriteParamAsString(TgirTypeParam(Field),i)+';',ABaseIndent+4,0));
+        otTypeParam: TypeDecl.Add(IndentText(WriteParamAsString(TgirTypeParam(Field),i, Dummy)+';',ABaseIndent+4,0));
         otCallback : TypeDecl.Add(IndentText(WriteCallBack(TgirCallback(Field),True),ABaseIndent+4,0));
         otUnion: TypeDecl.Add(IndentText(WriteUnion(TgirUnion(Field), True, ABaseIndent),ABaseIndent+4));
       else
@@ -1564,6 +1610,7 @@ var
   Union: TStringList;
   i: Integer;
   Field: TGirBaseType;
+  Dummy: Boolean;
 begin
   Union := TStringList.Create;
 
@@ -1576,7 +1623,7 @@ begin
       Field := AUnion.Fields.Field[i];
       case Field.ObjectType of
         otArray,
-        otTypeParam   : Union.Add(IndentText(IntToStr(i)+ ' : ' +ParenParams(WriteParamAsString(TgirTypeParam(Field),i))+';',ABaseIndent+ 4,0));
+        otTypeParam   : Union.Add(IndentText(IntToStr(i)+ ' : ' +ParenParams(WriteParamAsString(TgirTypeParam(Field),i, Dummy))+';',ABaseIndent+ 4,0));
         otCallback    : Union.Add(IndentText(IntToStr(i)+ ' : ' +ParenParams(WriteCallBack(TgirCallback(Field),True)),ABaseIndent+4,0));
         otRecord      : Union.Add(IndentText(IntToStr(i)+ ' : ' +ParenParams(WriteRecord(TgirRecord(Field),6, True))+';',ABaseIndent+4,0));
            //WriteFunction(AFunction, AItem, AIsMethod, AWantWrapperForObject, AFunctionList): String;
