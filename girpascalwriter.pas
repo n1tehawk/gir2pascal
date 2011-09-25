@@ -501,51 +501,10 @@ begin
 end;
 
 procedure TPascalUnit.AddGLibSupportCode;
-const
-  BitFRecord =
-     '  TBitObject32 = object'                                      +LineEnding+
-     '  protected'                                                  +LineEnding+
-     '    procedure SetBit(AMask: Integer; AValue: DWord);'         +LineEnding+
-     '    function GetBit(AMask: Integer): DWord;'                  +LineEnding+
-     '  public'                                                     +LineEnding+
-     '    Flags0: DWord;'                                           +LineEnding+
-     '    procedure Init(AFlags: DWord);'                           +LineEnding+
-     '  end;';
-
-  BFRecordImpl :AnsiString =
-     'procedure TBitObject32.Init(AFlags: DWord);'                  +LineEnding+
-     'begin'                                                        +LineEnding+
-     '  Flags0 := AFlags;'                                          +LineEnding+
-     'end;'                                                         +LineEnding+
-     ''                                                             +LineEnding+
-     'procedure TBitObject32.SetBit(AMask: Integer; AValue: DWord);'+LineEnding+
-     'begin'                                                        +LineEnding+
-     '  if AValue <> 0 then'                                        +LineEnding+
-     '  begin'                                                      +LineEnding+
-     '    if (Flags0 and AMask) = 0 then'                           +LineEnding+
-     '      Flags0 := Flags0 or AMask'                              +LineEnding+
-     '  end'                                                        +LineEnding+
-     '  else begin'                                                 +LineEnding+
-     '    if (Flags0 and AMask) <> 0 then'                          +LineEnding+
-     '      Flags0 := Flags0 xor AMask;'                            +LineEnding+
-     '  end;'                                                       +LineEnding+
-     'end;'                                                         +LineEnding+
-     ''                                                             +LineEnding+
-     'function TBitObject32.GetBit(AMask: Integer): DWord;'         +LineEnding+
-     'begin'                                                        +LineEnding+
-     '  Result := Flags0 and AMask;'                                +LineEnding+
-     '  if Result > 1 then'                                         +LineEnding+
-     '    Result := 1;'                                             +LineEnding+
-     'end;';
 var
-  CodeText: TPCodeText;
   TypeSect: TPDeclarationType;
   i: Integer;
 begin
-  WantTypeSection.Lines.Add(BitFRecord);
-  CodeText := TPCodeText.Create;
-  CodeText.Content:=BFRecordImpl;
-  ImplementationSection.Declarations.Add(CodeText);
 
   TypeSect := WantTypeSection;
   for i := 1 to 31 do
@@ -762,7 +721,7 @@ end;
 procedure TPascalUnit.HandleAlias(AItem: TgirAlias);
 var
   ResolvedForName: String;
-  CType: TGirBaseType;
+  CType: TGirBaseType = nil;
 begin
   ResolveTypeTranslation(AItem);
   ResolveTypeTranslation(AItem.ForType);
@@ -773,14 +732,14 @@ begin
   ResolvedForName := aItem.ForType.TranslatedName;
   if ResolvedForName = '' then
     begin
-
+      {
       //CType := NameSpace.LookupTypeByName('', AItem.ForType.CType);
       if CType <> nil then
          ResolvedForName := CType.TranslatedName;
 
       if ResolvedForName <> '' then
         aItem.ForType.TranslatedName := ResolvedForName
-      else
+      else}
         ResolvedForName := AItem.ForType.CType;
     end;
 
@@ -847,6 +806,7 @@ begin
 end;
 
 procedure TPascalUnit.HandleBitfield(AItem: TgirBitField);
+{
 const
   TemplateLongWord =
      '%s = packed object(TBitObject32)'+LineEnding+
@@ -860,8 +820,10 @@ var
   Entry: String;
   i: Integer;
   VarType: String;
-
+ }
 begin
+  HandleEnum(AItem, True);
+(*
   Intf := WantTypeSection;
   CodeText := TPCodeText.Create;
   ImplementationSection.Declarations.Add(CodeText);
@@ -878,8 +840,8 @@ begin
   else
     WriteLn('Bitfield <> 16bits');
     Halt;
-  end;}
-
+  end;
+  }
   HandleEnum(AItem, False);
 
   VarType:='DWord';
@@ -896,7 +858,7 @@ begin
 
   CodeText.Content:=Code.Text;
   Code.Free;
-
+ *)
 end;
 
 procedure TPascalUnit.HandleRecord(AItem: TgirRecord);
