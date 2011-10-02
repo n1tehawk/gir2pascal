@@ -30,7 +30,7 @@
     <RunParams>
       <local>
         <FormatVersion Value="1"/>
-        <CommandLineParams Value="-i /usr/share/gir-1.0/Gtk-3.0.gir -o /tmp/gir-out -w"/>
+        <CommandLineParams Value="-i /usr/share/gir-1.0/Gtk-3.0.gir -o /tmp/gir-out -w -D"/>
         <LaunchingApplication PathPlusParams="/usr/bin/gnome-terminal -t 'Lazarus Run Output' -e '$(LazarusDir)/tools/runwait.sh $(TargetCmdLine)'"/>
       </local>
     </RunParams>
@@ -86,6 +86,12 @@
       <IncludeFiles Value="$(ProjOutDir)"/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
+    <Linking>
+      <Debugging>
+        <GenerateDebugInfo Value="True"/>
+        <DebugInfoType Value="dsAuto"/>
+      </Debugging>
+    </Linking>
     <Other>
       <CompilerMessages>
         <UseMsgFile Value="True"/>

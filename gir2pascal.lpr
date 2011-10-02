@@ -39,6 +39,7 @@ type
     FFileToConvert: String;
     FOverWriteFiles: Boolean;
     FWantTest: Boolean;
+    FDynamicLink: Boolean;
     procedure AddDefaultPaths;
     procedure AddPaths(APaths: String);
     procedure VerifyOptions;
@@ -153,7 +154,7 @@ begin
   girFile.ParseXMLDocument(Doc);
   Doc.Free;
 
-  Writer := TgirPascalWriter.Create(girFile.NameSpaces, FWantTest);
+  Writer := TgirPascalWriter.Create(girFile.NameSpaces, FWantTest, FDynamicLink);
   Writer.OnUnitWriteEvent:= @WriteFile;
   Writer.GenerateUnits;
 
@@ -169,7 +170,7 @@ var
   ErrorMsg: String;
 begin
   // quick check parameters
-  ErrorMsg:=CheckOptions('hnp:o:i:wt',['help','no-default','paths','output-directory', 'input', 'overwrite-files', 'test']);
+  ErrorMsg:=CheckOptions('hnp:o:i:wtD',['help','no-default','paths','output-directory', 'input', 'overwrite-files', 'test', 'dynamic']);
   if ErrorMsg<>'' then begin
     ShowException(Exception.Create(ErrorMsg));
     Terminate;
@@ -201,6 +202,8 @@ begin
 
   FWantTest := HasOption('t', 'test');
 
+  FDynamicLink := HasOption('D', 'dynamic');
+
   VerifyOptions;
 
   // does all the heavy lifting
@@ -230,6 +233,7 @@ begin
   Writeln('');
   Writeln('      -i --input=            .gir filename to convert.');
   Writeln('      -o --output-directory=  Directory to write the resulting .pas files to. If not');
+  WriteLn('      -D --dynamic            Use unit dynlibs and link at runtime');
   Writeln('                              specified then the current working directory is used.');
   Writeln('      -w --overwrite-files    If the output .pas file(s) already exists then overwrite them.');
   Writeln('      -n --no-default         /usr/share/gir-1.0 is not added as a search location for ');

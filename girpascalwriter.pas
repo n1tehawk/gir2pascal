@@ -37,8 +37,9 @@ type
     FNameSpaces: TgirNamespaces;
     FUnits: TList;
     FWantTest: Boolean;
+    FLinkDynamic: Boolean;
   public
-     constructor Create(ANameSpaces: TgirNamespaces; AWantTest: Boolean);
+     constructor Create(ANameSpaces: TgirNamespaces; AWantTest: Boolean; ALinkDynamic: Boolean);
      procedure GenerateUnits;
      property OnUnitWriteEvent: TgirWriteEvent read FOnUnitWriteEvent write FOnUnitWriteEvent;
      property DefaultUnitExtension: String read FDefaultUnitExtension write FDefaultUnitExtension; // is .pas by default
@@ -83,19 +84,11 @@ type
   { TPDeclarationFunctions }
 
   TPDeclarationFunctions = class(TPDeclarationWithLines)
-    constructor Create; override;
-    // nothing special for this one
-  end;
-
-  { TPCodeText }
-
-  TPCodeText = class(TPDeclaration)
   private
-    FContent: String;
+    FDynamicFunctions: Boolean;
   public
+    constructor Create(ADynamicFunctions: Boolean);
     function AsString: String; override;
-    property Content: String read FContent write FContent;
-
   end;
 
   { TPUses }
@@ -137,6 +130,16 @@ type
     destructor Destroy; override;
     property Declarations: TPDeclarationList read FDeclarations;
   end;
+  { TPCodeText }
+
+  TPCodeText = class(TPDeclarationWithLines)
+  private
+    function GetContent: String;
+    procedure SetContent(AValue: String);
+  public
+    property Content: String read GetContent write SetContent;
+  end;
+
 
   { TPInterface }
 
@@ -146,7 +149,7 @@ type
     FFunctionSection: TPDeclarationFunctions;
     FUsesSection: TPUses;
   public
-    constructor Create(AOwner: TObject; AUses: TPUses);
+    constructor Create(AOwner: TObject; AUses: TPUses; ADynamicFunctions: Boolean);
     destructor Destroy; override;
     function AsString: String; override;
     property UsesSection: TPUses read FUsesSection;
@@ -176,6 +179,8 @@ type
 
   TPascalUnit = class
   private
+    FDynamicLoadUnloadSection: TPCodeText;
+    FDynamicEntryNames: TStringList;
     FLinkDynamic: Boolean;
     FFinalizeSection: TPFinialization;
     FImplementationSection: TPImplementation;
@@ -221,6 +226,10 @@ type
     function WriteRecord(ARecord: TgirRecord; ABaseIndent: Integer = 0; AIsUnion: Boolean = False): String;
     function WriteUnion(AUnion: TgirUnion; ASkipRecordName: Boolean; ABaseIndent: Integer = 0): String;
     function ParenParams(const AParams: String; const AForceParens: Boolean = False): String;
+    // methods for writing dynamic load code and libray names
+    procedure WriteDynamicLoadUnloadProcs;
+    function GetLibs: TStringList;
+
 
     // methods for dealing with type names
     function SanitizeName(AName: String; AExistingUsedNames: TStringList = nil): String;
@@ -250,6 +259,7 @@ type
 
     property InterfaceSection: TPInterface read FInterfaceSection;
     property ImplementationSection: TPImplementation read FImplementationSection;
+    property DynamicLoadUnloadSection: TPCodeText read FDynamicLoadUnloadSection;
     property InitializeSection: TPInitialize read FInitializeSection;
     property FinalizeSection: TPFinialization read FFinalizeSection;
     property UnitName: String read GetUnitName;
@@ -301,11 +311,20 @@ begin
   Result := ANameSpace+Version;
 end;
 
-constructor TPDeclarationFunctions.Create;
+constructor TPDeclarationFunctions.Create(ADynamicFunctions: Boolean);
 begin
   inherited Create;
+  FDynamicFunctions:=ADynamicFunctions;
   Lines.Duplicates:=dupIgnore;
   Lines.Sorted:=True;
+end;
+
+function TPDeclarationFunctions.AsString: String;
+begin
+  if FDynamicFunctions then
+    Result := 'var'+ LineEnding+inherited AsString
+  else
+    Result:= inherited AsString;
 end;
 
 { TPDeclarationVar }
@@ -333,10 +352,14 @@ begin
   Result:=Lines.Text;
 end;
 
-
-function TPCodeText.AsString: String;
+function TPCodeText.GetContent: String;
 begin
-  Result := Content;
+  Result := Lines.Text;
+end;
+
+procedure TPCodeText.SetContent(AValue: String);
+begin
+  Lines.Text:=AValue;
 end;
 
 { TPDeclarationType }
@@ -349,8 +372,17 @@ end;
 { TPDeclarationConst }
 
 function TPDeclarationConst.AsString: String;
+var
+  FirstConst: String;
 begin
-  Result:= IndentText('const') + Lines.Text;
+  if Lines.Count < 1 then
+    Exit('');
+  if (Lines.count > 1) and (Lines[1] = 'type') then
+    FirstConst := ''
+  else
+    FirstConst:=IndentText('const');
+
+  Result:= FirstConst + Lines.Text;
 end;
 
 { TPUses }
@@ -360,7 +392,6 @@ begin
   Units := TStringList.Create;
   Units.StrictDelimiter:=True;
   Units.Delimiter:=',';
-  Units.Add('CTypes');
 end;
 
 destructor TPUses.Destroy;
@@ -410,12 +441,13 @@ begin
   inherited Destroy;
 end;
 
-constructor TPInterface.Create(AOwner: TObject; AUses: TPUses);
+constructor TPInterface.Create(AOwner: TObject; AUses: TPUses; ADynamicFunctions: Boolean);
 begin
   inherited Create(AOwner);
   FUsesSection := AUses;
+  FUsesSection.Units.Add('CTypes');
   FConstSection := TPDeclarationConst.Create;
-  FFunctionSection := TPDeclarationFunctions.Create;
+  FFunctionSection := TPDeclarationFunctions.Create(ADynamicFunctions);
 end;
 
 destructor TPInterface.Destroy;
@@ -940,7 +972,13 @@ begin
   Params := WriteFunctionParams(AItem.Params);
   Postfix := ' external;';// '+UnitName+'_library;';
   FuncSect := WantFunctionSection;
-  FuncSect.Lines.Add(RoutineType +' '+ AItem.CIdentifier+ParenParams(Params)+Returns+Postfix);
+  if not FLinkDynamic then
+    FuncSect.Lines.Add(RoutineType +' '+ AItem.CIdentifier+ParenParams(Params)+Returns+Postfix)
+  else
+  begin
+    FuncSect.Lines.Add(AItem.CIdentifier +': '+RoutineType +ParenParams(Params)+Returns);
+    FDynamicEntryNames.Add(AItem.CIdentifier);
+  end;
 end;
 
 function TPascalUnit.WriteFunction(AFunction: TgirFunction; AItem: TGirBaseType; AIsMethod: Boolean; AWantWrapperForObject: Boolean; AFunctionList: TStrings; AExistingUsedNames: TStringList = nil): String;
@@ -978,7 +1016,10 @@ begin
   Params := WriteFunctionParams(AFunction.Params);
   if Pos('array of const', Params) + Pos('va_list', Params) > 0 then
     Prefix:='//';
-  Postfix := ' external;';// '+UnitName+'_library;';
+  if not FLinkDynamic then
+    Postfix := ' external;'// '+UnitName+'_library;';
+  else
+    PostFix := '';
 
   // first wrapper proc
   Entry := Prefix + RoutineType +' '+ SanitizeName(AFunction.Name, AExistingUsedNames)+ParenParams(Params)+Returns+InLineS;
@@ -1000,8 +1041,18 @@ begin
       Params := SanitizeName('A'+AItem.Name) +': '+TypeAsString(AItem, 1);
   end;
 
-  // this is the flat c procedure that a wrapper would call
-  Entry := RoutineType +' '+ AFunction.CIdentifier+ParenParams(Params)+Returns;
+
+  // write the flat c function that will be linked
+  if not FLinkDynamic then
+  begin
+    // this is the flat c procedure that a wrapper would call
+    Entry := RoutineType +' '+ AFunction.CIdentifier+ParenParams(Params)+Returns;
+  end
+  else // Link Dynamic
+  begin
+    Entry := AFunction.CIdentifier+': '+RoutineType+ParenParams(Params)+Returns;
+    FDynamicEntryNames.Add(AFunction.CIdentifier);
+  end;
 
   // takes care of duplicates
   AFunctionList.Add(Entry+Postfix);
@@ -1192,16 +1243,23 @@ var
   procedure AddGetTypeProc(AObj: TgirGType);
   const
     GetTypeTemplate = 'function %s: %s; cdecl; external;';
+    GetTypeTemplateDyn = '%s: function:%s; cdecl;';
   var
     AType: String;
   begin
     AType:='TGType';
-    if AObj.GetTypeFunction = '' then
+    if (AObj.GetTypeFunction = '') or (AObj.GetTypeFunction = 'none') or (AObj.GetTypeFunction = 'intern') then
       Exit;
     if not NameSpace.UsesGLib then
       AType := 'csize_t { TGType }';
 
-    UnitFuncs.Add(Format(GetTypeTemplate, [AObj.GetTypeFunction, AType]));
+    if not FLinkDynamic then
+      UnitFuncs.Add(Format(GetTypeTemplate, [AObj.GetTypeFunction, AType]))
+    else
+    begin
+      UnitFuncs.Add(Format(GetTypeTemplateDyn, [AObj.GetTypeFunction, AType]));
+      FDynamicEntryNames.Add(AObj.GetTypeFunction);
+    end;
   end;
 
 var
@@ -1647,6 +1705,123 @@ begin
     Result := '('+AParams+')';
 end;
 
+procedure TPascalUnit.WriteDynamicLoadUnloadProcs;
+var
+  Dyn: TStrings;
+  Libs: TStringList;
+  LibNames: array of string;
+  InitCode: TPCodeText;
+  FinalCode: TPCodeText;
+   procedure AddLibVars;
+   var
+     Lib: String;
+     i: Integer;
+   begin
+     Dyn.Add('var');
+     SetLength(LibNames, Libs.Count);
+     for i := 0 to Libs.Count-1 do
+     begin
+       Lib := Libs[i];
+       LibNames[i] := SanitizeName(Lib);
+       Dyn.Add('  '+LibNames[i] + ': TLibHandle;');
+     end;
+   end;
+
+   procedure WriteLoadLibrary;
+   var
+     i: Integer;
+   begin
+     Dyn.Add('procedure LoadLibraries;');
+     Dyn.Add('begin');
+     for i := 0 to Libs.Count-1 do
+       Dyn.Add('  '+LibNames[i]+' := SafeLoadLibrary('''+Libs[i]+''');');
+     Dyn.Add('end;');
+     Dyn.Add('');
+
+     InitCode.Lines.Add('LoadLibraries;');
+
+   end;
+   procedure WriteLoadProcs;
+   var
+     i: Integer;
+   begin
+     Dyn.Add('procedure LoadProcs;');
+     Dyn.Add('  procedure LoadProc(var AProc: Pointer; AName: String);');
+     Dyn.Add('  var');
+     Dyn.Add('    ProcPtr: Pointer;');
+     Dyn.Add('  begin');
+     Dyn.Add('    ProcPtr := GetProcedureAddress('+LibNames[0]+', AName);');
+     if Libs.Count > 0 then
+     begin
+       for i := 1 to Libs.Count-1 do begin
+       Dyn.Add('      if ProcPtr = nil then');
+       Dyn.Add('        ProcPtr := GetProcedureAddress('+LibNames[i]+', AName);');
+       end;
+     end;
+     Dyn.Add('    AProc := ProcPtr;');
+     Dyn.Add('  end;');
+     // Now the Main procedure starts
+     Dyn.Add('begin');
+     for i := 0 to FDynamicEntryNames.Count-1 do
+     Dyn.Add('  LoadProc(Pointer('+FDynamicEntryNames[i]+'), '''+FDynamicEntryNames[i]+''');');
+     Dyn.Add('end;');
+     Dyn.Add('');
+
+     InitCode.Lines.Add('LoadProcs;');
+
+   end;
+
+   procedure WriteUnloadLibrary;
+   var
+     Tmp: String;
+   begin
+     Dyn.Add('procedure UnloadLibraries;');
+     Dyn.Add('begin');
+     for Tmp in LibNames do
+     begin
+     Dyn.Add(' if '+ Tmp+ ' <> 0 then');
+     Dyn.Add('   UnloadLibrary('+Tmp+');');
+     Dyn.Add('   '+Tmp+' := 0;');
+     end;
+     for Tmp in FDynamicEntryNames do
+     Dyn.Add('  '+Tmp+' := nil;');
+     Dyn.Add('end;');
+     Dyn.Add('');
+
+     FinalCode.Lines.Add('UnloadLibraries;');
+   end;
+
+begin
+  if FDynamicEntryNames.Count = 0 then
+    Exit;
+  Libs := GetLibs;
+  if Libs.Count = 0 then
+  begin
+    Libs.Free;
+    Exit;
+  end;
+  Dyn := FDynamicLoadUnloadSection.Lines;
+  InitCode := TPCodeText.Create;
+  FinalCode := TPCodeText.Create;
+  InitializeSection.Declarations.Add(InitCode);
+  FinalizeSection.Declarations.Add(FinalCode);
+
+
+  AddLibVars;
+  WriteLoadLibrary;
+  WriteLoadProcs;
+  WriteUnloadLibrary;
+  Libs.Free;
+end;
+
+function TPascalUnit.GetLibs: TStringList;
+begin
+  Result := TStringList.Create;
+  Result.Delimiter:=',';
+  Result.StrictDelimiter:= True;
+  Result.CommaText:=NameSpace.SharedLibrary;
+end;
+
 function TPascalUnit.SanitizeName(AName: String; AExistingUsedNames: TStringList = nil): String;
 var
   PascalReservedWords : array[0..30] of String =
@@ -1670,6 +1845,7 @@ begin
     Result := 'CSET_a_2_z_lower';
   Result := StringReplace(Result, '-','_',[rfReplaceAll]);
   Result := StringReplace(Result, ' ','_',[rfReplaceAll]);
+  Result := StringReplace(Result, '.','_',[rfReplaceAll]);
 
   if AExistingUsedNames <> nil then
   begin
@@ -1721,7 +1897,11 @@ begin
   FFinalizeSection := TPFinialization.Create(Self);
   FImplementationSection := TPImplementation.Create(Self);
   FInitializeSection := TPInitialize.Create(Self);
-  FInterfaceSection := TPInterface.Create(Self, TPUses.Create);
+  FInterfaceSection := TPInterface.Create(Self, TPUses.Create, FLinkDynamic);
+  FDynamicLoadUnloadSection := TPCodeText.Create;
+  FDynamicEntryNames := TStringList.Create;
+  FDynamicEntryNames.Sorted:=True;
+  FDynamicEntryNames.Duplicates := dupIgnore;
   FNameSpace := ANameSpace;
   if FWantTest then
   begin
@@ -1751,6 +1931,8 @@ begin
   FImplementationSection.Free;
   FInitializeSection.Free;
   FInterfaceSection.Free;
+  FDynamicLoadUnloadSection.Free;
+  FDynamicEntryNames.Free;
 
   inherited Destroy;
 end;
@@ -1835,6 +2017,7 @@ procedure TPascalUnit.GenerateUnit;
 var
   i: Integer;
   NS: TgirNamespace;
+  ImplementationUses: TPUses;
 begin
   for i := 0 to FNameSpace.RequiredNameSpaces.Count-1 do
   begin
@@ -1842,12 +2025,22 @@ begin
     InterfaceSection.UsesSection.Units.Add(' '+CalculateUnitName(NS.NameSpace,NS.Version));
   end;
 
-  i := Pos(',',NameSpace.SharedLibrary);
-  if i > 0 then
-    LibName:=Copy(NameSpace.SharedLibrary,1,i-1)
-  else
-    LibName:=NameSpace.SharedLibrary;
-  WantConstSection.Lines.Add(IndentText(UnitName+'_library = '''+LibName+''';', 2));
+  if FLinkDynamic then
+  begin
+    ImplementationUses := TPUses.Create;
+    ImplementationUses.Units.Add('DynLibs');
+    ImplementationSection.Declarations.Add(ImplementationUses);
+  end
+  else // Not linking dynamically
+  begin
+    i := Pos(',',NameSpace.SharedLibrary);
+    if i > 0 then
+      LibName:=Copy(NameSpace.SharedLibrary,1,i-1)
+    else
+      LibName:=NameSpace.SharedLibrary;
+    WantConstSection.Lines.Add(IndentText(UnitName+'_library = '''+LibName+''';', 2));
+  end;
+
   if NameSpace.NameSpace = 'GLib' then
     AddGLibSupportCode;
 
@@ -1859,11 +2052,7 @@ var
   Libs: TStringList;
   i: Integer;
 begin
-  Libs := TStringList.Create;
-  Libs.Delimiter:=',';
-  Libs.StrictDelimiter:= True;
-  Libs.CommaText:=NameSpace.SharedLibrary;
-
+  Libs := GetLibs;
   Result := TStringStream.Create('');
   Str.WriteString(IndentText('{ This is an autogenerated unit using gobject introspection. Do not Edit. }',0,1));
   Str.WriteString(IndentText('unit '+ UnitName+';',0,2));
@@ -1873,13 +2062,20 @@ begin
   //Str.WriteString(IndentText('{$CALLING CDECL}',0,2));
   Str.WriteString(IndentText('{$MODESWITCH DUPLICATELOCALS+}',0,2));
 
-  for i := 0 to Libs.Count-1 do
-    Str.WriteString(IndentText('{$LINKLIB '+Libs.Strings[i]+'}',0,1));
+  if not FLinkDynamic then
+    for i := 0 to Libs.Count-1 do
+      Str.WriteString(IndentText('{$LINKLIB '+Libs.Strings[i]+'}',0,1));
 
   Libs.Free;
 
   Str.WriteString(InterfaceSection.AsString);
   Str.WriteString(ImplementationSection.AsString);
+
+  if FLinkDynamic then
+  begin
+    WriteDynamicLoadUnloadProcs;
+    Str.WriteString(DynamicLoadUnloadSection.AsString);
+  end;
 
   if InitializeSection.Declarations.Count > 0 then
      Str.WriteString(InitializeSection.AsString);
@@ -1922,12 +2118,13 @@ end;
 
 { TgirPascalWriter }
 
-constructor TgirPascalWriter.Create(ANameSpaces: TgirNamespaces; AWantTest: Boolean);
+constructor TgirPascalWriter.Create(ANameSpaces: TgirNamespaces; AWantTest: Boolean; ALinkDynamic: Boolean);
 begin
   FNameSpaces := ANameSpaces;
   FUnits := TList.Create;
   FDefaultUnitExtension:='.pas';
   FWantTest:=AWantTest;
+  FLinkDynamic:=ALinkDynamic;
 end;
 
 procedure TgirPascalWriter.GenerateUnits;
@@ -1940,7 +2137,7 @@ begin
   for i := 0 to FNameSpaces.Count-1 do
     begin
       WriteLn(Format('Converting %s', [FNameSpaces.NameSpace[i].NameSpace]));
-      FUnit := TPascalUnit.Create(FNameSpaces.NameSpace[i], False, FWantTest);
+      FUnit := TPascalUnit.Create(FNameSpaces.NameSpace[i], FLinkDynamic, FWantTest);
       FUnit.ProcessConsts(FNameSpaces.NameSpace[i].Constants);
       FUnit.ProcessTypes(FNameSpaces.NameSpace[i].Types);
       FUnit.ProcessFunctions(FNameSpaces.NameSpace[i].Functions);
