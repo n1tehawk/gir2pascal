@@ -822,10 +822,11 @@ begin
       gtDoc:;
       gtType:    begin
                    C_Type := Node.GetAttribute('c:type');
+                   FCType:= C_Type;
                    VarTypeName:=Node.GetAttribute('name');
                    if VarTypeName = '' then
                      VarTypeName:= StringReplace(C_Type, '*', '', [rfReplaceAll]);
-                     FVarType := TgirNamespace(Owner).LookupTypeByName(VarTypeName, C_Type);
+                   FVarType := TgirNamespace(Owner).LookupTypeByName(VarTypeName, C_Type);
                  end;
       gtArray:   begin
                    C_Type := Node.GetAttribute('c:type');

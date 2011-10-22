@@ -993,7 +993,7 @@ var
 begin
   Result := '';
   // we skip deprecated functions
-  if AFunction.Deprecated and (CompareStr(AFunction.DeprecatedVersion, NameSpace.Version) >=  0) then
+  if AFunction.Deprecated then //and (CompareStr(AFunction.DeprecatedVersion, NameSpace.Version) >=  0) then
     Exit;
 
   // some abstract functions that are to be implemented by a module and shouldn't be declared. There is no indicator in the gir file that this is so :(
@@ -1454,7 +1454,7 @@ begin
   else
   begin
     AFunctionType:='function';
-    AFunctionReturnType:= ': '+TypeAsString(AItem.Returns.VarType, AItem.Returns.PointerLevel)+'; cdecl;' ;
+    AFunctionReturnType:= ': '+TypeAsString(AItem.Returns.VarType, AItem.Returns.PointerLevel, AItem.Returns.CType)+'; cdecl;' ;
 
     // will skip if written
     ProcessType(AItem.Returns.VarType);
@@ -1488,10 +1488,18 @@ end;
 function TPascalUnit.TypeAsString(AType: TGirBaseType; APointerLevel: Integer; ACTypeAsBackup: String = ''): String;
 var
   BackupNoPointers: String;
+  TranslatedName: String;
 begin
   ResolveTypeTranslation(AType);
+  TranslatedName := AType.TranslatedName;
 
   BackupNoPointers := StringReplace(ACTypeAsBackup, '*', '', [rfReplaceAll]);
+
+  // some types are pointers but contain no "*" so it thinks it has a pointer level 0 when really it's 1
+  if (APointerLevel = 0) and (ACTypeAsBackup = 'gpointer') and (TranslatedName <> '') and (TranslatedName <> 'gpointer') then
+  begin
+    APointerLevel := 1;
+  end;
 
   if APointerLevel = 0 then
   begin
@@ -1868,9 +1876,16 @@ begin
 end;
 
 procedure TPascalUnit.ResolveTypeTranslation(ABaseType: TGirBaseType);
+var
+  RawName: String;
 begin
   if ABaseType.TranslatedName = '' then
-    ABaseType.TranslatedName:=MakePascalTypeFromCType(ABaseType.CType, 0);
+  begin
+    RawName := ABaseType.CType;
+    if RawName = '' then
+      RawName:= ABaseType.Name;
+    ABaseType.TranslatedName:=MakePascalTypeFromCType(RawName, 0);
+  end;
 end;
 
 constructor TPascalUnit.Create(ANameSpace: TgirNamespace; ALinkDynamic: Boolean; AWantTest: Boolean);
