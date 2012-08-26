@@ -726,7 +726,6 @@ var
 begin
   inherited Create(AOwner, ANode);
   FFields := TgirFieldsList.Create;
-  {$warning not implemented}
   Node := ANode.FirstChild;
   while Node <> nil do
   begin
@@ -814,6 +813,9 @@ begin
   //NodeURL(ANode);
   //Node := TDomELement(ANode.FindNode('type'));
   Node := TDOMElement(ANode.FirstChild);
+  if Node = nil then
+     girError(geError, Format(geMissingNode,[ClassName, '', ANode.NodeName]));
+
   while Node <> nil do
   begin
     // it's one or the other
@@ -851,8 +853,25 @@ begin
   if (FVarType <> nil) {and (GirTokenNameToToken(ANode.NodeName) = gtArray)} then
     FVarType.ImpliedPointerLevel := PointerLevelFromVarName(CType);
 
-  if Token <> gtVarArgs then
-    FVarType.ImpliedPointerLevel:=PointerLevel; //only will grow
+  if (FVarType <> nil) and (Token <> gtVarArgs) then
+      FVarType.ImpliedPointerLevel:=PointerLevel; //only will grow
+
+  if (FVarType = nil) and (Token <> gtVarArgs) then
+  begin
+    WriteLn('Vartype name = ',VarTypeName);
+    VarTypeName := ANode.NodeName;
+    Node := TDOMElement(Anode.ParentNode);
+    while Node <> nil do
+    begin
+      if node.InheritsFrom(TDOMElement) then
+        VarTypeName := Node.NodeName + '('+Node.GetAttribute('name')+')/'+ VarTypeName
+      else
+        VarTypeName := Node.NodeName + '/'+ VarTypeName;
+      Node := TDOMElement(Node.ParentNode);
+    end;
+    WriteLn('Vartype is nil when it shouldnt be! '+VarTypeName );
+    raise Exception.Create('Vartype is nil when it shouldnt be! ');
+  end;
   FObjectType:=otTypeParam;
 end;
 
@@ -1052,10 +1071,22 @@ end;
 
 constructor TgirAlias.Create(AOwner: TObject; ANode: TDomNode);
 var
-  Node: TDOMElement;
+  TmpNode, Node: TDOMElement;
+  NodePath: String;
 begin
   inherited Create(AOwner, ANode);
   Node := TDomELement(ANode.FindNode('type'));
+  TmpNode := Node;
+    while TmpNode <> nil do
+    begin
+      if TmpNode.InheritsFrom(TDOMElement) then
+        NodePath := TmpNode.NodeName + '('+TmpNode.GetAttribute('name')+')/'+ NodePath
+      else
+        NodePath := TmpNode.NodeName + '/'+ NodePath;
+      TmpNode := TDOMElement(TmpNode.ParentNode);
+    end;
+
+  //WriteLn('ALIAS: ', Node.GetAttribute('name')+' ', NodePath);
   FForType := TgirNamespace(Owner).LookupTypeByName(Node.GetAttribute('name'), Node.GetAttribute('c:type'));
   FObjectType:=otAlias;
 end;

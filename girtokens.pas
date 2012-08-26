@@ -81,7 +81,9 @@ implementation
 function GirTokenNameToToken(AName: String): TGirToken;
 begin
   for Result in TGirToken do
-    if GirTokenName[Result] = AName then
+    if GirTokenName[Result][1] <> AName[1] then
+      continue
+    else if GirTokenName[Result] = AName then
       Exit;
   Result := gtInvalid;
 end;

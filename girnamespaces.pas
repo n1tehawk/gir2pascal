@@ -482,7 +482,9 @@ begin
   if FPos > 0 then  // type includes namespace "NameSpace.Type"
   begin
     NSString:=Copy(AName,1,FPos-1);
-    NS := (Owner As TgirNamespaces).FindNameSpace(NSString);
+
+    //NS := (Owner As TgirNamespaces).FindNameSpace(NSString);
+    NS := TgirNamespaces(Owner).FindNameSpace(NSString);
     if NS = nil then
       girError(geError, 'Referenced Namespace "'+NSString+'" not found while looking for '+AName);
     AName := Copy(AName, FPos+1, Length(AName));
@@ -490,6 +492,7 @@ begin
 
   if NS <> Self then SearchOnly:=True;
 
+  //if NS <> Self then WriteLn('Self NS = ', NameSpace, ' Lookup NS = ', NS.NameSpace);
   Result := TGirBaseType(NS.Types.Find(AName));
   if (Result <> nil) and (Result.ObjectType = otFuzzyType) and (TgirFuzzyType(Result).ResolvedType <> nil) then
     Result := TgirFuzzyType(Result).ResolvedType;

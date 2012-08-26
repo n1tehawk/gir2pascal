@@ -63,7 +63,7 @@ begin
     Exit;
   end;
  // if AType = geDebug then
-  //WriteLn(girErrorName[AType],': ', AMsg);
+    WriteLn(girErrorName[AType],': ', AMsg);
 
 end;
 
