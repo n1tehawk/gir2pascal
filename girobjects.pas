@@ -220,6 +220,7 @@ type
   private
     FCIdentifier: String;
     FDeprecated: Boolean;
+    FDeprecatedMsg: String;
     FDeprecatedVersion: String;
     FParams: TgirParamList;
     FReturns: TgirFunctionReturn;
@@ -230,6 +231,7 @@ type
     property Returns: TgirFunctionReturn read FReturns;
     property CIdentifier: String read FCIdentifier;
     property Deprecated: Boolean read FDeprecated;
+    property DeprecatedMsg: String read FDeprecatedMsg;
     property DeprecatedVersion: String read FDeprecatedVersion;
   end;
 
@@ -939,7 +941,10 @@ begin
     end;
  FDeprecated:=TDOMElement(ANode).GetAttribute('deprecated') <> '';
  if FDeprecated then
+ begin
+    FDeprecatedMsg:=TDOMElement(ANode).GetAttribute('deprecated');
     FDeprecatedVersion:=TDOMElement(ANode).GetAttribute('deprecated-version');
+ end;
  FObjectType:=otFunction;
 end;
 

@@ -129,7 +129,7 @@ begin
     FindClose(Sr);
   end;
   if Result = nil then
-    WriteLn('Unable to find gir file: ',NamespaceName);
+    WriteLn('Fatal: Unable to find gir file: ',NamespaceName);
 end;
 
 procedure TGirConsoleConverter.WriteFile(Sender: TObject; AName: String; AStream: TStringStream);
@@ -211,6 +211,7 @@ begin
     AddOption(['w', 'overwrite-files'], False ,'If the output .pas file(s) already exists then overwrite them.');
     AddOption(['n', 'no-default'], False ,'/usr/share/gir-1.0 is not added as a search location for needed .gir files.');
     AddOption(['p', 'paths'], True ,'List of paths seperated by ":" to search for needed .gir files.');
+    AddOption(['d', 'deprecated'], False, 'Include fields and methods marked as deprecated.');
     AddOption(['t', 'test'], False ,'Creates a test program per unit to verify struct sizes.');
   end;
   FCmdOptions.ReadOptions;
@@ -267,6 +268,9 @@ begin
 
   if FCmdOptions.HasOption('dynamic') then
     Include(FOptions, goLinkDynamic);
+
+  if FCmdOptions.HasOption('deprecated') then
+    Include(FOptions, goIncludeDeprecated);
 
   if FCmdOptions.HasOption('classes') then
   begin

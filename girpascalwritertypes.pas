@@ -8,7 +8,7 @@ uses
   Classes, SysUtils, girNameSpaces, girObjects, girTokens, contnrs;
 
 type
-  TgirOption = (goWantTest, goLinkDynamic, goSeperateConsts, goClasses, goObjects);
+  TgirOption = (goWantTest, goLinkDynamic, goSeperateConsts, goClasses, goObjects, goIncludeDeprecated);
   TgirOptions = set of TgirOption;
   TgirWriteEvent = procedure (Sender: TObject; AUnitName: AnsiString; AStream: TStringStream) of object;
 
@@ -1143,13 +1143,14 @@ var
   Postfix: String;
   Entry: String;
   InLineS: String = '';
+  Deprecated: String = '';
   ProperUnit: TPascalUnit;
   OptionsIndicateWrapperMethod: Boolean;
 begin
   Result := '';
   OptionsIndicateWrapperMethod:= FUnitType = PascalUnitTypeAll;
   // we skip deprecated functions
-  if AFunction.Deprecated then //and (CompareStr(AFunction.DeprecatedVersion, NameSpace.Version) >=  0) then
+  if AFunction.Deprecated and not (goIncludeDeprecated in FOptions) then //and (CompareStr(AFunction.DeprecatedVersion, NameSpace.Version) >=  0) then
     Exit;
 
   // some abstract functions that are to be implemented by a module and shouldn't be declared. There is no indicator in the gir file that this is so :(
@@ -1162,6 +1163,7 @@ begin
   if AWantWrapperForObject then
     InLineS:=' inline;';
 
+  if AFunction.Deprecated then Deprecated :=' deprecated ''Since ' + NameSpace.NameSpace + ' ' + AFunction.DeprecatedVersion+' '+StringReplace(AFunction.DeprecatedMsg,'''','`', [rfReplaceAll])+''';';
   // this fills in the values for procedure/function and the return type
   WriteFunctionTypeAndReturnType(AFunction, RoutineType, Returns);
 
@@ -1173,9 +1175,9 @@ begin
   if Pos('array of const', Params) + Pos('va_list', Params) > 0 then
     Prefix:='//';
   if not (goLinkDynamic in FOptions) then
-    Postfix := ' external;'// '+UnitName+'_library;';
+    Postfix := ' external;'+ Deprecated// '+UnitName+'_library;';
   else
-    PostFix := '';
+    PostFix := ''+Deprecated;
 
   // first wrapper proc
   Entry := Prefix + RoutineType +' '+ SanitizeName(AFunction.Name, AExistingUsedNames)+ParenParams(Params)+Returns+InLineS;
@@ -1187,7 +1189,7 @@ begin
   // This is the line that will be used by in the TObject declaration. <----
   // result will be written in the object declaration.
   if OptionsIndicateWrapperMethod then
-    Result := Entry
+    Result := Entry + Deprecated
   else
     Result := '';
 
@@ -1283,12 +1285,12 @@ var
       SetFound := SetFound or (Pos(LookingForSet+'(', Line) > 0);
 
       // the first argument must match the property type! (result is the return type)
-      if SetFound and (Pos(Result+')', Line) = 0) then
-      writeln('Eliminated ', Line, ' for missing: ', Result);
+      //if SetFound and (Pos(Result+')', Line) = 0) then
+      //  writeln('Eliminated ', Line, ' for missing: ', Result);
       SetFound := SetFound and (Pos(Result+')', Line) > 0);
 
       // pascal properties cannot use functions for the set 'procedure'
-      SetFound := SetFound and (Pos('procedure ', Line) > 0);
+      SetFound := SetFound and (Pos('procedure ', Line) > 0) and (Pos('property '+AProperty.Name, Line) = 0);
 
       if SetFound then
         Exit;
