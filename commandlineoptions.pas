@@ -46,9 +46,16 @@ type
     // read from commandline
     procedure ReadOptions;
 
+    // string based
     function HasOption(AName: String): Boolean;
     function OptionValue(AName:String): String;
     function OptionValues(AName: String): TStrings;
+
+    // tag based
+    function HasOption(AIdentifier: Integer): Boolean;
+    function OptionValue(AIdentifier: Integer): String;
+    function OptionValues(AIdentifier: Integer): TStrings;
+
     constructor Create;
     destructor Destroy; override;
     function PrintHelp(MaxLineWidth: Integer): TStrings; virtual;
@@ -285,6 +292,44 @@ begin
     Exit;
   for S in Opt.Values do
     Result.Add(S);
+end;
+
+function TCommandLineOptions.HasOption(AIdentifier: Integer): Boolean;
+var
+  Opt: TOption;
+begin
+  Result := False;
+  Opt := FindOptionByIdentifier(AIdentifier);
+  if Opt = nil then
+    Exit;
+
+  Result := Opt.Present;
+end;
+
+function TCommandLineOptions.OptionValue(AIdentifier: Integer): String;
+var
+  Opt: TOption;
+begin
+  Result := '';
+  Opt := FindOptionByIdentifier(AIdentifier);
+  if Opt = nil then
+    Exit;
+
+  Result := Opt.Value;
+end;
+
+function TCommandLineOptions.OptionValues(AIdentifier: Integer): TStrings;
+var
+  Opt: TOption;
+  Tmp: String;
+begin
+  Result := TStringList.Create;
+  Opt := FindOptionByIdentifier(AIdentifier);
+  if Opt = nil then
+    Exit;
+
+  for Tmp in Opt.Values do
+    Result.Add(Tmp);
 end;
 
 constructor TCommandLineOptions.Create;

@@ -323,7 +323,12 @@ begin
   ConsoleWidth:=w.ws_col;
   {$ENDIF}
   Writeln('Usage: ',ExtractFileName(ParamStr(0)),' [options] -i filename');
-  WriteLn(FCmdOptions.PrintHelp(ConsoleWidth).Text);
+  with FCmdOptions.PrintHelp(ConsoleWidth) do
+  begin
+    WriteLn(Text);
+    Free;
+
+  end;
 {
   Writeln('');
   writeln('    Usage: ',ExtractFileName(ParamStr(0)),' [options] -i filename');
