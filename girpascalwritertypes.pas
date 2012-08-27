@@ -263,7 +263,7 @@ type
   end;
 
 implementation
-uses girpascalwriter, girCTypesMapping;
+uses girpascalwriter, girCTypesMapping, girErrors, typinfo;
 
 function IndentText(const AText: String; Spaces: Integer = 0; LineEndingCount: Integer = 1): String;
 begin
@@ -673,7 +673,7 @@ begin
 
   if (AType.CType = '') then //(AType.Name = '') then
   begin
-    WriteLn('WARNING: Type.Ctype undefined! : ', Atype.Name);
+    girError(geWarn, 'Type.Ctype undefined! : '+ Atype.Name);
     //Halt;
 
   end;
@@ -724,7 +724,7 @@ begin
       end;
   else
     //WantTypeSection.Lines.Add(IndentText(AType.ClassName + ' ' +AType.Name + ' ' + AType.CType ,2));
-    WriteLn('Unknown Type: ', AType.ClassName);
+    girError(geFatal, 'Type.Ctype undefined! : '+ Atype.Name);
     Halt;
   end; // case
   if (AType.InheritsFrom(TgirGType)) then // and (TgirGType(AType).HasFields) then
@@ -832,7 +832,8 @@ var
   i: Integer;
 begin
   if AItem.ForwardDefinitionWritten then
-    WriteLn('Warning: Forwards definitions already written for : ', Aitem.TranslatedName);
+    girError(geWarn, 'Forwards definitions already written for : '+ Aitem.TranslatedName);
+    //WriteLn('Warning: Forwards definitions already written for : ', Aitem.TranslatedName);
   AItem.ForwardDefinitionWritten := True;
   PTypes := MakePointerTypesForType(ATypeName, APointerLevel);
   PTypes.Insert(0, ATypeName);
@@ -1067,7 +1068,7 @@ begin
   TypeSect.Lines.Add(IndentText('{ opaque type }',4,0));
   TypeSect.Lines.Add(IndentText('Unknown: Pointer;',4,0)); // to prevent crashes of the compiler
   TypeSect.Lines.Add(IndentText('end;',2,1));
-  WriteLn('Wrote Opaque Type Name = ', AItem.Name,' CType = ', AItem.CType);
+  girError(geInfo, 'Wrote Opaque Type Name = ' + AItem.Name +' CType = '+ AItem.CType);
 
 end;
 
@@ -1273,6 +1274,7 @@ var
           end;
         FoundPos:=Pos(';', Line);
         Result := Trim(Copy(Line, 1,FoundPos-1));
+        //WriteLn('Found property: ',Result, ' Property Value = ', AProperty.PropType.CType);
         break;
       end
     end;
@@ -1386,7 +1388,7 @@ var
                         end;
 
       else // case <
-        WriteLn('Unknown Field Type : ', Field.ClassName);
+        girError(geFatal, 'Unknown Field Type : '+ Field.ClassName);
         Halt;
       end;
     end;
@@ -1471,12 +1473,12 @@ begin
           ProperUnit := Self;
       end;
   else
-    WriteLn('Unknown ObjectType : ', AObjectType);
+    girError(geFatal, 'Unknown ObjectType : '+ GetEnumName(TypeInfo(TGirToken), Ord(AObjectType)));
     Halt;
   end;
   if ProperUnit = nil then
   begin
-    WriteLn('ProperUnit is not assigned! : ', AObjectType);
+    girError(geFatal, 'ProperUnit is not assigned! : '+ GetEnumName(TypeInfo(TGirToken), Ord(AObjectType)));
     Halt;
   end;
   if ProperUnit <> Self then
@@ -1508,7 +1510,7 @@ begin
     gtInterface: ;
     gtGType: ;
   else
-    WriteLn('Got Object Type I don''t understand: ', GirTokenName[AObjectType]);
+    girError(geWarn, 'Got Object Type I don''t understand: ' + GirTokenName[AObjectType]);
   end;
 
   if AItem.InheritsFrom(TgirGType) then
@@ -1742,7 +1744,7 @@ begin
   end;
   if APointerLevel > AType.ImpliedPointerLevel then
   begin
-    WriteLn('Trying to use a pointerlevel > written level!');
+    girError(geFatal, 'Trying to use a pointerlevel > written level!');
     Halt;
   end;
 end;
@@ -1821,7 +1823,7 @@ begin
       1..32:
           PT := Format('guint%d { changed from %s to accomodate %d bitsize requirement }',[AParam.Bits, PT, AParam.Bits]);
     else
-      WriteLn('WARNING: Bits are Set to [ ',AParam.Bits,' ]for: ' ,PN+': '+PT);
+      girError(geWarn, 'Bits are Set to [ '+IntToStr(AParam.Bits)+' ]for: ' +PN+': '+PT);
       PT +=' { ERROR : Bits are Set to [ '+IntToStr(AParam.Bits)+' ]  }';
     end;
 
@@ -1922,7 +1924,7 @@ begin
         otMethod      : Union.Add(IndentText('//'+WriteFunction(TgirFunction(Field), AUnion, True, False, WantFunctionSection.Lines), ABaseIndent+2,0));
       else
         Union.Add('// Unhandled type for Union: '+ Field.ClassName); // this won't compile obviously
-        WriteLn('Unhandled type for Union: ', Field.ClassName);
+        girError(geWarn, 'Unhandled type for Union: '+ Field.ClassName);
       end;
 
     end;

@@ -327,7 +327,6 @@ begin
   begin
     WriteLn(Text);
     Free;
-
   end;
 {
   Writeln('');

@@ -52,6 +52,7 @@ type
     FVersion: String;
     FWriting: TGirModeState;
     procedure SetImpliedPointerLevel(AValue: Integer);
+    function MaybeResolvedType: TGirBaseType;
   public
     constructor Create(AOwner: TObject; ANode: TDomNode); virtual;
     property CType: String read FCType write FCType;
@@ -122,9 +123,10 @@ type
     FIsArray: Boolean;
     FPropType: TgirBaseType;
     FWriteable: Boolean;
+    function GetPropType: TgirBaseType;
   public
     constructor Create(AOwner: TObject; ANode: TDomNode); override;
-    property PropType: TgirBaseType read FPropType;
+    property PropType: TgirBaseType read GetPropType;
     property Writable: Boolean read FWriteable;
     property IsArray: Boolean read FIsArray;
   end;
@@ -513,6 +515,13 @@ end;
 
 { TgirProperty }
 
+function TgirProperty.GetPropType: TgirBaseType;
+begin
+  Result := FPropType;
+  if Assigned(Result) and Result.InheritsFrom(TgirFuzzyType) and (TgirFuzzyType(Result).ResolvedType <> nil) then
+    Result := TgirFuzzyType(Result).ResolvedType;
+end;
+
 constructor TgirProperty.Create(AOwner: TObject; ANode: TDomNode);
 var
   Node: TDOMElement;
@@ -543,7 +552,8 @@ end;
 
 function TgirClass.GetParentClass: TgirClass;
 begin
-  if (FParentClass <> nil) and (FParentClass.InheritsFrom(TgirFuzzyType)) and (TgirFuzzyType(FParentClass).ResolvedType <> nil) then
+  Result := FParentClass;
+  if (FParentClass <> nil) and (FParentClass.ObjectType = otFuzzyType) and (TgirFuzzyType(FParentClass).ResolvedType <> nil) then
      FParentClass := TgirClass(TgirFuzzyType(FParentClass).ResolvedType);
   Result := FParentClass;
 end;
@@ -576,7 +586,11 @@ begin
   FInterfaces := TList.Create; // must be before inherited else list does not exist when ParseNeode is called
   inherited Create(AOwner, ANode);
   Parent := TDOMElement(ANode).GetAttribute('parent');
-  FParentClass := TgirClass(TgirNamespace(Owner).LookupTypeByName(Parent, '', True));
+  if Parent = '' then
+    FParentClass := nil
+  else
+    FParentClass := TgirClass(TgirNamespace(Owner).LookupTypeByName(Parent, '', True));
+
   if CType = '' then
      CType := TDOMElement(ANode).GetAttribute('glib:type-name');
   FObjectType:=otClass;
@@ -1053,6 +1067,8 @@ begin
   if AValue = FResolvedType then
     Exit;
   FResolvedType := AValue;
+  if Assigned(FResolvedType) then
+    FResolvedType.ImpliedPointerLevel:=ImpliedPointerLevel;
   //girError(geDebug, 'Resolved FuzzyType '+AValue.Name);
 end;
 
@@ -1116,6 +1132,14 @@ begin
   end;
   if FImpliedPointerLevel > 3 then
     FImpliedPointerLevel:=3;
+end;
+
+function TGirBaseType.MaybeResolvedType: TGirBaseType;
+begin
+  if Self.InheritsFrom(TgirFuzzyType) and (TgirFuzzyType(Self).ResolvedType <> nil) then
+    Result := TgirFuzzyType(Self).ResolvedType
+  else
+    Result := Self;
 end;
 
 constructor TGirBaseType.Create(AOwner: TObject; ANode: TDOMNode);

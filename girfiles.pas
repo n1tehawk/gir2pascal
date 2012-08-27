@@ -24,7 +24,7 @@ unit girFiles;
 interface
 
 uses
-  Classes, SysUtils, XMLRead, DOM, girNameSpaces, girParser;
+  Classes, SysUtils, DOM, girNameSpaces, girParser;
 
 type
 
