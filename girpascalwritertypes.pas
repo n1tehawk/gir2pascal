@@ -8,7 +8,7 @@ uses
   Classes, SysUtils, girNameSpaces, girObjects, girTokens, contnrs;
 
 type
-  TgirOption = (goWantTest, goLinkDynamic, goSeperateConsts, goClasses, goObjects, goIncludeDeprecated);
+  TgirOption = (goWantTest, goLinkDynamic, goSeperateConsts, goClasses, goObjects, goIncludeDeprecated, goNoWrappers);
   TgirOptions = set of TgirOption;
   TgirWriteEvent = procedure (Sender: TObject; AUnitName: AnsiString; AStream: TStringStream) of object;
 
@@ -1189,7 +1189,7 @@ begin
 
   // This is the line that will be used by in the TObject declaration. <----
   // result will be written in the object declaration.
-  if OptionsIndicateWrapperMethod then
+  if OptionsIndicateWrapperMethod and not(goNoWrappers in FOptions) then
     Result := Entry + Deprecated
   else
     Result := '';
@@ -1223,7 +1223,7 @@ begin
 
   //RoutineType, AObjectName, AObjectFunctionName, AParams, AFunctionReturns, AFlatFunctionName, AWantSelf
   // writes the implementation of what we declared in the object
-  if AWantWrapperForObject and  (Prefix = '') and OptionsIndicateWrapperMethod then
+  if AWantWrapperForObject and  (Prefix = '') and OptionsIndicateWrapperMethod and not (goNoWrappers in FOptions) then
      WriteWrapperForObject(RoutineType, AItem.TranslatedName, ProperUnit.SanitizeName(AFunction.Name), AFunction.Params, Returns, AFunction.CIdentifier, AIsMethod);
 end;
 
@@ -1310,7 +1310,7 @@ var
     OptionsIndicateWrapperMethod: Boolean;
   begin
     OptionsIndicateWrapperMethod:=FUnitType = PascalUnitTypeAll;
-    if not OptionsIndicateWrapperMethod then
+    if not OptionsIndicateWrapperMethod or (goNoWrappers in FOptions) then
       Exit('');
     ReadFunc:= 'read '+SanitizeName('get_'+ AProperty.Name);
     if AProperty.Writable then

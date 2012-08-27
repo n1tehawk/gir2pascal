@@ -208,6 +208,7 @@ begin
                                'Note: If -C or -O are not used then pascal Objects and consts '+
                                'are in a single unit.');
     {$ENDIF CreatePascalClasses}
+    AddOption(['N', 'no-wrappers'], False ,'Do not create wrappers for objects.');
     AddOption(['w', 'overwrite-files'], False ,'If the output .pas file(s) already exists then overwrite them.');
     AddOption(['n', 'no-default'], False ,'/usr/share/gir-1.0 is not added as a search location for needed .gir files.');
     AddOption(['p', 'paths'], True ,'List of paths seperated by ":" to search for needed .gir files.');
@@ -277,6 +278,9 @@ begin
     Include(FOptions, goClasses);
     Include(FOptions, goSeperateConsts);
   end;
+
+  if FCmdOptions.HasOption('no-wrappers') then
+    Include(FOptions, goNoWrappers);
 
   if FCmdOptions.HasOption('objects') then
   begin
