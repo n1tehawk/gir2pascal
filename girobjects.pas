@@ -106,14 +106,17 @@ type
 
   TgirTypeParam = class(TGirBaseType)
   private
+    FIsInstanceParam: Boolean;
     FVarType: TGirBaseType;
     FPointerLevel: Integer;
     function GetPointerLevel: Integer;
     function GetType: TGirBaseType;
   public
     constructor Create(AOwner: TObject; ANode: TDomNode); override;
+    constructor Create(AOwner: TObject; ANode: TDomNode; AIsInstanceParam: Boolean); virtual;
     property VarType: TGirBaseType read GetType;
     property PointerLevel: Integer read GetPointerLevel;
+    property IsInstanceParam: Boolean read FIsInstanceParam;
   end;
 
   { TgirProperty }
@@ -199,6 +202,7 @@ type
   TGirFunctionParam = class(TgirTypeParam)
   public
     constructor Create(AOwner: TObject; ANode: TDomNode); override;
+    constructor Create(AOwner: TObject; ANode: TDomNode; AIsInstanceParam: Boolean); override;
   end;
 
   { TgirFunctionReturn }
@@ -226,6 +230,7 @@ type
     FDeprecatedVersion: String;
     FParams: TgirParamList;
     FReturns: TgirFunctionReturn;
+    FThrowsGError: Boolean;
   publiC
     constructor Create(AOwner: TObject; ANode: TDomNode); override;
     destructor Destroy; override;
@@ -235,6 +240,7 @@ type
     property Deprecated: Boolean read FDeprecated;
     property DeprecatedMsg: String read FDeprecatedMsg;
     property DeprecatedVersion: String read FDeprecatedVersion;
+    property ThrowsGError: Boolean read FThrowsGError write FThrowsGError;
   end;
 
   { TgirMethod }
@@ -374,7 +380,7 @@ type
 
 
 implementation
-uses girNameSpaces, girErrors;
+uses girNameSpaces, girErrors, XMLRead;
 
 { TgirClassStruct }
 
@@ -773,6 +779,12 @@ begin
   FObjectType:=otFunctionParam;
 end;
 
+constructor TGirFunctionParam.Create(AOwner: TObject; ANode: TDomNode;
+  AIsInstanceParam: Boolean);
+begin
+  inherited Create(AOwner, ANode, AIsInstanceParam);
+end;
+
 { TgirTypeParam }
 
 function TgirTypeParam.GetType: TGirBaseType;
@@ -891,12 +903,59 @@ begin
   FObjectType:=otTypeParam;
 end;
 
+constructor TgirTypeParam.Create(AOwner: TObject; ANode: TDomNode;
+  AIsInstanceParam: Boolean);
+begin
+  FIsInstanceParam:=AIsInstanceParam;
+  Create(AOwner, ANode);
+end;
+
 { TgirFunction }
 
 constructor TgirFunction.Create(AOwner: TObject; ANode: TDomNode);
 var
   Node: TDOMNode;
   NodeToken: TGirToken;
+
+  procedure CheckAddErrorParam(ParentNode: TDomNode);
+  //const
+  //  ErrorXML = '<parameter name="error"> <type name="Error" c:type="GError**"/> </parameter>';
+  var
+    Param: TGirFunctionParam;
+    AddParam: Boolean;
+    ErrorNode: TDOMElement;
+    TypeNode: TDOMElement;
+  begin
+    // some functions have throws=1 as a property of the node. This indicates that
+    // the last parameter is GError **error. The introspection file does not include
+    // this as a parameter so we have to add it ourselves
+    AddParam:=False;
+    if FParams.Count > 0 then
+    begin
+      Param := FParams.Param[FParams.Count-1];
+      //WriteLn(Param.CType);
+      if Param.CType <> 'GError**' then
+      begin
+        AddParam:=True;
+
+      end;
+    end
+    else
+      AddParam:=True;
+
+    if AddParam then
+    begin
+      girError(geInfo, Format(geAddingErrorNode,[ClassName, CIdentifier]));
+      ErrorNode := ParentNode.OwnerDocument.CreateElement('parameter');
+      ErrorNode.SetAttribute('name','error');
+      TypeNode := ParentNode.OwnerDocument.CreateElement('type');
+      ErrorNode.AppendChild(TypeNode);
+      TypeNode.SetAttribute('name','Error');
+      TypeNode.SetAttribute('c:type','GError**');
+      ParentNode.AppendChild(ErrorNode);
+    end;
+  end;
+
 
   procedure CreateParameters(ANode: TDomNode);
   var
@@ -913,9 +972,16 @@ var
             Param := TGirFunctionParam.Create(AOwner, PNode);
             FParams.Add(Param);
           end;
+          gtInstanceParameter:
+          begin
+            Param := TGirFunctionParam.Create(AOwner, PNode, True);
+            FParams.Add(Param);
+          end;
       else
         girError(geError, Format(geUnexpectedNodeType,[ClassName, PNode.NodeName, GirTokenName[gtParameter]]));
       end;
+      if FThrowsGError and (PNode.NextSibling = nil) then
+        CheckAddErrorParam(ANode); // may add a NextSibling
       PNode := PNode.NextSibling;
     end;
   end;
@@ -924,6 +990,7 @@ begin
   inherited Create(AOwner, ANode);
   FParams := TgirParamList.Create;
   FCIdentifier:=TDOMElement(ANode).GetAttribute('c:identifier');
+  ThrowsGError:=TDOMElement(ANode).GetAttribute('throws') = '1';
   if FName = '' then FName:=FCIdentifier;
   if FName = '' then FName:=StringReplace(FCType, '*', '', [rfReplaceAll]);
 

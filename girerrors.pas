@@ -34,6 +34,7 @@ type
     geUnhandledNode = 'Unhandled node [%s] "%s"';
     geUnexpectedNodeType = 'Unexpected node [%s] type: found "%s" expected "%s"';
     geMissingNode = '[%s] Could not find child node "%s" while looking in node "%s"';
+    geAddingErrorNode = '%s %s throws an error but is not included as a param. Adding...';
 
   var
     girErrorName: array[TGirError] of String =(

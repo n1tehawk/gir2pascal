@@ -28,7 +28,7 @@ uses
 type
   TGirToken = (gtInvalid, gtAlias, gtConstant, gtRecord, gtBitField, gtEnumeration,
                gtCallback, gtUnion, gtFunction, gtReturnValue, gtType,
-               gtParameters, gtParameter, gtMember, gtField, gtMethod, gtArray,
+               gtParameters, gtParameter, gtInstanceParameter, gtMember, gtField, gtMethod, gtArray,
                gtDoc, gtConstructor, gtRepository, gtInclude, gtNameSpace, gtPackage,
                gtCInclude, gtClass, gtProperty, gtVirtualMethod, gtInterface,
                gtGlibSignal, gtImplements, gtPrerequisite,gtVarArgs, gtObject, gtClassStruct, gtGType);
@@ -50,6 +50,7 @@ var
     'type',
     'parameters',
     'parameter',
+    'instance-parameter',
     'member',
     'field',
     'method',

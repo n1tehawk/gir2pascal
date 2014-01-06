@@ -213,7 +213,7 @@ type
     procedure WriteWrapperForObject(ARoutineType, AObjectName, AObjectFunctionName: String; AParams:TgirParamList; AFunctionReturns: String; AFlatFunctionName: String; AWantSelf: Boolean);
     function WriteCallBack(AItem: TgirFunction; IsInObject: Boolean; AExistingUsedNames: TStringList = nil): String;
     procedure WriteFunctionTypeAndReturnType(AItem: TgirFunction; out AFunctionType, AFunctionReturnType: String);
-    function WriteFunctionParams(AParams: TgirParamList; AArgs: PString = nil): String;
+    function WriteFunctionParams(AParams: TgirParamList; AArgs: PString = nil; AIncludeInstanceParam: Boolean = False): String;
     function WriteFunction(AFunction: TgirFunction; AItem: TGirBaseType; AIsMethod: Boolean; AWantWrapperForObject: Boolean; AFunctionList: TStrings; AExistingUsedNames: TStringList = nil): String;
     function WriteParamAsString(AParam: TgirTypeParam; AIndex: Integer;  out ABitSizeSpecified: Boolean; AFirstParam: PString = nil; AExistingUsedNames: TStringList = nil): String;
     function WriteRecord(ARecord: TgirRecord; ABaseIndent: Integer = 0; AIsUnion: Boolean = False): String;
@@ -1144,10 +1144,14 @@ var
   Postfix: String;
   Entry: String;
   InLineS: String = '';
-  Deprecated: String = '';
+  DeprecatedS: String = '';
   ProperUnit: TPascalUnit;
   OptionsIndicateWrapperMethod: Boolean;
 begin
+  { I apologize to anyone who tries to figure all this out. In short this function
+    writes procedure lines for an object and it's implementation. As well as the
+    plain function the object method calls.
+  }
   Result := '';
   OptionsIndicateWrapperMethod:= FUnitType = PascalUnitTypeAll;
   // we skip deprecated functions
@@ -1164,7 +1168,7 @@ begin
   if AWantWrapperForObject then
     InLineS:=' inline;';
 
-  if AFunction.Deprecated then Deprecated :=' deprecated ''Since ' + NameSpace.NameSpace + ' ' + AFunction.DeprecatedVersion+' '+StringReplace(AFunction.DeprecatedMsg,'''','`', [rfReplaceAll])+''';';
+  if AFunction.Deprecated then DeprecatedS :=' deprecated ''Since ' + NameSpace.NameSpace + ' ' + AFunction.DeprecatedVersion+' '+StringReplace(AFunction.DeprecatedMsg,'''','`', [rfReplaceAll])+''';';
   // this fills in the values for procedure/function and the return type
   WriteFunctionTypeAndReturnType(AFunction, RoutineType, Returns);
 
@@ -1172,13 +1176,13 @@ begin
   if AFunction.InheritsFrom(TgirConstructor) then
     Returns := ': '+MakePascalTypeFromCType(AItem.TranslatedName ,1)+'; cdecl;';
 
-  Params := WriteFunctionParams(AFunction.Params);
+  Params := WriteFunctionParams(AFunction.Params, nil, False);
   if Pos('array of const', Params) + Pos('va_list', Params) > 0 then
     Prefix:='//';
   if not (goLinkDynamic in FOptions) then
-    Postfix := ' external;'+ Deprecated// '+UnitName+'_library;';
+    Postfix := ' external;'+ DeprecatedS// '+UnitName+'_library;';
   else
-    PostFix := ''+Deprecated;
+    PostFix := ''+DeprecatedS;
 
   // first wrapper proc
   Entry := Prefix + RoutineType +' '+ SanitizeName(AFunction.Name, AExistingUsedNames)+ParenParams(Params)+Returns+InLineS;
@@ -1190,18 +1194,24 @@ begin
   // This is the line that will be used by in the TObject declaration. <----
   // result will be written in the object declaration.
   if OptionsIndicateWrapperMethod and not(goNoWrappers in FOptions) then
-    Result := Entry + Deprecated
+    Result := Entry + DeprecatedS
   else
     Result := '';
 
   // now make sure the flat proc has all the params it needs
   if AIsMethod then
   begin
-    // methods do not include the first param for it's type so we have to add it
-    if Params <> '' then
-      Params := SanitizeName('A'+AItem.Name) +': '+TypeAsString(AItem, 1)+'; ' + Params
+    // with older introspection versions methods do not include the first param for it's type so we have to add it
+    if (AFunction.Params.Count = 0) // <--only true if older
+    or ((AFunction.Params.Count > 0) and not(AFunction.Params.Param[0].IsInstanceParam)) then // <-- true if older
+    begin
+      if Params <> '' then
+        Params := SanitizeName('A'+AItem.Name) +': '+TypeAsString(AItem, 1)+'; ' + Params
+      else
+        Params := SanitizeName('A'+AItem.Name) +': '+TypeAsString(AItem, 1);
+    end
     else
-      Params := SanitizeName('A'+AItem.Name) +': '+TypeAsString(AItem, 1);
+      Params := WriteFunctionParams(AFunction.Params, nil, True);
   end;
 
   ProperUnit := FGroup.GetUnitForType(utFunctions);
@@ -1625,7 +1635,7 @@ var
 begin
   if AWantSelf then
   begin
-    if AParams.Count = 0 then
+    if (AParams.Count = 0) or ((AParams.Count = 1) and AParams.Param[0].IsInstanceParam) then
       CallParams:='@self'
     else
       CallParams:='@self, ';
@@ -1634,11 +1644,12 @@ begin
     CallParams:='';
   if (ARoutineType = 'function') or (ARoutineType='constructor') then
     ResultStr := 'Result := ';
-  Params:=WriteFunctionParams(AParams, @Args);
+  Params:=WriteFunctionParams(AParams, @Args, not AWantSelf);
   CallParams:=CallParams+Args;
   Code := TPCodeText.Create;
   Code.Content := Format(Decl, [ARoutineType, AObjectName, AObjectFunctionName, ParenParams(Params), AFunctionReturns])+
-                  Format(Body, [ResultStr, FGroup.UnitForType[utFunctions].UnitFileName+'.'+AFlatFunctionName, CallParams]);
+                  Format(Body, [ResultStr, FGroup.UnitForType[utFunctions].UnitFileName+'.'+AFlatFunctionName,
+                  CallParams]);
   ImplementationSection.Declarations.Add(Code);
 
 
@@ -1690,7 +1701,7 @@ begin
   end;
 end;
 
-function TPascalUnit.WriteFunctionParams(AParams: TgirParamList; AArgs: PString = nil): String;
+function TPascalUnit.WriteFunctionParams(AParams: TgirParamList; AArgs: PString = nil; AIncludeInstanceParam: Boolean = false): String;
 var
   i: Integer;
   ArgName: String;
@@ -1701,7 +1712,13 @@ begin
     AArgs^ := '';
   for i := 0 to AParams.Count-1 do
     begin
-      Result := Result+WriteParamAsString(AParams.Param[i], i, Dummy, @ArgName);
+      // IsInstanceParam is only the ever the first param so this is safe if it's the
+      // only Param and AArgs is not updated. AArgs := @Self[, ;] is set in WriteFunction
+      if AIncludeInstanceParam or (not AIncludeInstanceParam and not AParams.Param[i].IsInstanceParam) then
+        Result := Result+WriteParamAsString(AParams.Param[i], i, Dummy, @ArgName)
+      else
+        Continue;
+
       if i < AParams.Count-1 then
       begin
         Result := Result +'; ';
