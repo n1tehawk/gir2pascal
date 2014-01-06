@@ -106,6 +106,7 @@ type
 
   TgirTypeParam = class(TGirBaseType)
   private
+    FIsConst: Boolean;
     FIsInstanceParam: Boolean;
     FVarType: TGirBaseType;
     FPointerLevel: Integer;
@@ -117,6 +118,7 @@ type
     property VarType: TGirBaseType read GetType;
     property PointerLevel: Integer read GetPointerLevel;
     property IsInstanceParam: Boolean read FIsInstanceParam;
+    property IsConst: Boolean read FIsConst;
   end;
 
   { TgirProperty }
@@ -830,6 +832,16 @@ constructor TgirTypeParam.Create(AOwner: TObject; ANode: TDomNode);
         Inc(Result);
   end;
 
+  function AssignC_Type(C_Type: String): String;
+  begin
+    if Pos('const ', C_Type) > 0 then
+    begin
+      FIsConst:=True;
+      Result := Copy(C_Type, 7, Length(C_Type) - 6);
+    end
+    else
+      Result := C_Type;
+  end;
 var
   Node: TDOMElement;
   C_Type: String;
@@ -851,7 +863,8 @@ begin
     case Token of
       gtDoc:;
       gtType:    begin
-                   C_Type := Node.GetAttribute('c:type');
+                   C_Type := AssignC_Type(Node.GetAttribute('c:type'));
+
                    FCType:= C_Type;
                    VarTypeName:=Node.GetAttribute('name');
                    if VarTypeName = '' then
@@ -859,7 +872,7 @@ begin
                    FVarType := TgirNamespace(Owner).LookupTypeByName(VarTypeName, C_Type);
                  end;
       gtArray:   begin
-                   C_Type := Node.GetAttribute('c:type');
+                   C_Type := AssignC_Type(Node.GetAttribute('c:type'));
                    FVarType := TgirNamespace(Owner).LookupTypeByName(TDOMElement(Node.FirstChild).GetAttribute('name'), C_Type);
                    Tmp := Node.GetAttribute('length');
                    if Tmp <> '' then
@@ -945,7 +958,7 @@ var
 
     if AddParam then
     begin
-      girError(geInfo, Format(geAddingErrorNode,[ClassName, CIdentifier]));
+      //girError(geInfo, Format(geAddingErrorNode,[ClassName, CIdentifier]));
       ErrorNode := ParentNode.OwnerDocument.CreateElement('parameter');
       ErrorNode.SetAttribute('name','error');
       TypeNode := ParentNode.OwnerDocument.CreateElement('type');

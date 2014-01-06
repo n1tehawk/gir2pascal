@@ -214,6 +214,7 @@ begin
     AddOption(['p', 'paths'], True ,'List of paths seperated by ":" to search for needed .gir files.');
     AddOption(['d', 'deprecated'], False, 'Include fields and methods marked as deprecated.');
     AddOption(['t', 'test'], False ,'Creates a test program per unit to verify struct sizes.');
+    AddOption(['P', 'unit-prefix'], True, 'Set a prefix to be added to each unitname.');
   end;
   FCmdOptions.ReadOptions;
   if FCmdOptions.OptionsMalformed then

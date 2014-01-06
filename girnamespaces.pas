@@ -471,7 +471,7 @@ begin
   NS := Self;
   // some basic fixes
   PlainCType:=StringReplace(StripPointers(ACType, @PointerLevel), ' ', '_', [rfReplaceAll]);
-  if (PlainCType = 'gchar') or {(PlainCType = 'guchar') or} (PlainCType = 'char') then
+  if (PlainCType = 'gchar') or {(PlainCType = 'guchar') or} (PlainCType = 'char') or (PlainCType = 'const_char') then
     AName := 'GLib.utf8';
 
   if (PlainCType = 'GType')  {or (AName = 'Type')} or (AName = 'GType')then
@@ -497,10 +497,17 @@ begin
   if (Result <> nil) and (Result.ObjectType = otFuzzyType) and (TgirFuzzyType(Result).ResolvedType <> nil) then
     Result := TgirFuzzyType(Result).ResolvedType;
 
+  // if we find a result in another namespace then we need to depend on that namespace/unit
+  if (NS <> nil) and (NS <> Self) and (Result <> nil) then
+    if FRequiredNameSpaces.IndexOf(NS) = -1 then
+      FRequiredNameSpaces.Add(NS);
+
   if (Result = nil) and Not SearchOnly then
       Result := NS.AddFuzzyType(AName, ACType);
   if Result <> nil then
     Result.ImpliedPointerLevel:=PointerLevel;
+
+
 end;
 
 function TgirNamespace.ResolveFuzzyType(AFuzzyType: TgirFuzzyType): TGirBaseType;

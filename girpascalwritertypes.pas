@@ -1632,13 +1632,32 @@ var
   Code: TPCodeText;
   ResultStr: String = '';
   Args: String;
+  Param: TGirFunctionParam;
 begin
   if AWantSelf then
   begin
-    if (AParams.Count = 0) or ((AParams.Count = 1) and AParams.Param[0].IsInstanceParam) then
-      CallParams:='@self'
+    CallParams := '';
+    // old gir files don't have the instance-param
+    if AParams.Count < 1 then
+      CallParams:='@'
     else
-      CallParams:='@self, ';
+    begin
+      Param := AParams.Param[0];
+      if Param.IsInstanceParam then
+      begin
+        if ((Param.PointerLevel > 0) or (Param.ImpliedPointerLevel > 0))
+        and ((Pos('*', Param.CType)>0) or ((Pos('pointer', Param.CType)>0)))
+        then
+          CallParams:='@'+Param.TranslatedName;
+      end
+      else // old gir files don't have the instance-param
+        CallParams:='@';
+    end;
+
+    if (AParams.Count = 0) or ((AParams.Count = 1) and AParams.Param[0].IsInstanceParam) then
+      CallParams+='self'
+    else
+      CallParams+='self, ';
   end
   else
     CallParams:='';
@@ -1735,6 +1754,13 @@ function TPascalUnit.TypeAsString(AType: TGirBaseType; APointerLevel: Integer; A
 var
   BackupNoPointers: String;
   TranslatedName: String;
+
+  function NameIsPointerType(AName: String): Boolean;
+         begin
+           Result := ((AName = 'gpointer') or(AName = 'gconstpointer'))
+                       and (TranslatedName <> AName)
+                       and (TranslatedName <> '');
+         end;
 begin
   ResolveTypeTranslation(AType);
   TranslatedName := AType.TranslatedName;
@@ -1742,7 +1768,7 @@ begin
   BackupNoPointers := StringReplace(ACTypeAsBackup, '*', '', [rfReplaceAll]);
 
   // some types are pointers but contain no "*" so it thinks it has a pointer level 0 when really it's 1
-  if (APointerLevel = 0) and (ACTypeAsBackup = 'gpointer') and (TranslatedName <> '') and (TranslatedName <> 'gpointer') then
+  if (APointerLevel = 0) and (NameIsPointerType(ACTypeAsBackup)) then
   begin
     APointerLevel := 1;
   end;
