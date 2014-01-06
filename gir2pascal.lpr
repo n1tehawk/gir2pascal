@@ -41,6 +41,7 @@ type
     FPaths: TStringList;
     FOutPutDirectory : String;
     FFileToConvert: String;
+    FUnitPrefix: String;
     FOverWriteFiles: Boolean;
     FOptions: TgirOptions;
     procedure AddDefaultPaths;
@@ -178,7 +179,7 @@ begin
   girFile.ParseXMLDocument(Doc);
   Doc.Free;
 
-  Writer := TgirPascalWriter.Create(girFile.NameSpaces, FOptions);
+  Writer := TgirPascalWriter.Create(girFile.NameSpaces, FOptions, FUnitPrefix);
   Writer.OnUnitWriteEvent:= @WriteFile;
   Writer.GenerateUnits;
 
@@ -258,6 +259,9 @@ begin
 
   FFileToConvert:=FCmdOptions.OptionValue('input');
     AddPaths(ExtractFilePath(FFileToConvert));
+
+  if FCmdOptions.HasOption('unit-prefix') then
+    FUnitPrefix := FCmdOptions.OptionValue('unit-prefix');
 
   if FCmdOptions.HasOption('paths') then
     AddPaths(FCmdOptions.OptionValue('paths'));

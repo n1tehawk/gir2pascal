@@ -33,12 +33,13 @@ type
   TgirPascalWriter = class
   private
     FDefaultUnitExtension: String;
+    FUnitPrefix: String;
     FOnUnitWriteEvent: TgirWriteEvent;
     FNameSpaces: TgirNamespaces;
     FUnits: TList;
     FOptions: TgirOptions;
   public
-     constructor Create(ANameSpaces: TgirNamespaces; AOptions: TgirOptions);
+     constructor Create(ANameSpaces: TgirNamespaces; AOptions: TgirOptions; AUnitPrefix: String);
      procedure GenerateUnits;
      property OnUnitWriteEvent: TgirWriteEvent read FOnUnitWriteEvent write FOnUnitWriteEvent;
      property DefaultUnitExtension: String read FDefaultUnitExtension write FDefaultUnitExtension; // is .pas by default
@@ -52,9 +53,10 @@ uses girCTypesMapping;
 
 { TgirPascalWriter }
 
-constructor TgirPascalWriter.Create(ANameSpaces: TgirNamespaces; AOptions: TgirOptions);
+constructor TgirPascalWriter.Create(ANameSpaces: TgirNamespaces; AOptions: TgirOptions; AUnitPrefix: String);
 begin
   FNameSpaces := ANameSpaces;
+  FUnitPrefix := AUnitPrefix;
   FUnits := TList.Create;
   FDefaultUnitExtension:='.pas';
   FOptions:=AOptions;
@@ -70,7 +72,7 @@ begin
   for i := 0 to FNameSpaces.Count-1 do
     begin
       WriteLn(Format('Converting %s', [FNameSpaces.NameSpace[i].NameSpace]));
-      UnitGroup := TPascalUnitGroup.Create(Self, FNameSpaces.NameSpace[i], FOptions);
+      UnitGroup := TPascalUnitGroup.Create(Self, FNameSpaces.NameSpace[i], FOptions, FUnitPrefix);
       UnitGroup.GenerateUnits;
     end;
 end;

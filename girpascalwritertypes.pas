@@ -152,12 +152,13 @@ type
     FSimpleUnit: Boolean;
     FOptions: TgirOptions;
     FNameSpace: TgirNamespace;
+    FUnitPrefix: String;
     FWriter: TObject;//girPascalWriter;
     FUnits: TFPList;
     //Units: array[TPascalUnitType] of TPascalUnit;
     function GetUnitForType(AType: TPascalUnitType): TPascalUnit;
   public
-    constructor Create(AWriter: TObject{TgirPascalWriter}; ANameSpace: TgirNamespace; AOptions: TgirOptions);
+    constructor Create(AWriter: TObject{TgirPascalWriter}; ANameSpace: TgirNamespace; AOptions: TgirOptions; AUnitPrefix: String);
     destructor Destroy; override;
     procedure GenerateUnits;
     property UnitForType[AType: TPascalUnitType]: TPascalUnit read GetUnitForType;
@@ -170,6 +171,7 @@ type
   private
     FDynamicLoadUnloadSection: TPCodeText;
     FDynamicEntryNames: TStringList;
+    FUnitPrefix: String;
     FGroup : TPascalUnitGroup;
     FOptions: TgirOptions;
     FFinalizeSection: TPFinialization;
@@ -187,6 +189,7 @@ type
     function GetUnitFileName: String;
     function GetUnitName: String;
     function GetUnitPostfix: String;
+    function UnitPrefix: String;
 
     // functions to ensure the type is being written in the correct declaration
     function WantTypeSection: TPDeclarationType;
@@ -241,7 +244,7 @@ type
     procedure ResolveFuzzyTypes;
     procedure AddTestType(AGType: TgirGType);
   public
-    constructor Create(AGroup: TPascalUnitGroup; ANameSpace: TgirNamespace; AOptions: TgirOptions; AUnitType: TPascalUnitTypes);
+    constructor Create(AGroup: TPascalUnitGroup; ANameSpace: TgirNamespace; AOptions: TgirOptions; AUnitType: TPascalUnitTypes; AUnitPrefix: String);
     destructor Destroy; override;
     procedure ProcessConsts(AList:TList); // of TgirBaseType descandants
     procedure ProcessTypes(AList:TFPHashObjectList); // of TgirBaseType descandants
@@ -324,17 +327,18 @@ begin
 end;
 
 constructor TPascalUnitGroup.Create(AWriter:TObject{TgirPascalWriter}; ANameSpace: TgirNamespace;
-  AOptions: TgirOptions);
+  AOptions: TgirOptions; AUnitPrefix: String);
 begin
   FWriter := AWriter;
   FNameSpace := ANameSpace;
   FOptions := AOptions;
   FUnits := TFPList.Create;
+  FUnitPrefix:=AUnitPrefix;
   FSimpleUnit := ([goSeperateConsts, goClasses, goObjects] * AOptions ) = [];
 
   if FSimpleUnit then
   begin
-    FUnits.Add(TPascalUnit.Create(Self, FNameSpace, FOptions, PascalUnitTypeAll));
+    FUnits.Add(TPascalUnit.Create(Self, FNameSpace, FOptions, PascalUnitTypeAll, FUnitPrefix));
     //Units[utSimple] := TPascalUnit.Create(Self, FNameSpace, FOptions, [utSimple])
 
   end
@@ -343,11 +347,11 @@ begin
     //Units[utConsts] := TPascalUnit.Create(Self, FNameSpace, FOptions, [utConsts]);
     //Units[utTypes] := TPascalUnit.Create(Self, FNameSpace, FOptions, [utTypes]);
     //Units[utFunctions] := TPascalUnit.Create(Self, FNameSpace, FOptions, [utFunctions]);
-    FUnits.Add(TPascalUnit.Create(Self, FNameSpace, FOptions, PascalUnitTypeCommon));
+    FUnits.Add(TPascalUnit.Create(Self, FNameSpace, FOptions, PascalUnitTypeCommon, FUnitPrefix));
     if goClasses in FOptions then
-      FUnits.Add(TPascalUnit.Create(Self, FNameSpace, FOptions, [utClasses]))
+      FUnits.Add(TPascalUnit.Create(Self, FNameSpace, FOptions, [utClasses], FUnitPrefix))
     else
-      FUnits.Add(TPascalUnit.Create(Self, FNameSpace, FOptions, [utObjects]))
+      FUnits.Add(TPascalUnit.Create(Self, FNameSpace, FOptions, [utObjects], FUnitPrefix))
   end;
 
 end;
@@ -560,7 +564,7 @@ end;
 
 function TPascalUnit.GetUnitFileName: String;
 begin
-  Result := UnitName+GetUnitPostfix;
+  Result := UnitPrefix+UnitName+GetUnitPostfix;
 end;
 
 function TPascalUnit.GetUnitPostfix: String;
@@ -801,6 +805,11 @@ begin
 
   FTestPascalFile.WriteString(PT); // pascal testproc
   FTestPascalBody.Add(Format('Test_%s;',[AGType.CType])); //call pascal testproc
+end;
+
+function TPascalUnit.UnitPrefix: String;
+begin
+  Result := FUnitPrefix;
 end;
 
 function TPascalUnit.WantTypeSection: TPDeclarationType;
@@ -2160,7 +2169,7 @@ begin
   end;
 end;
 
-constructor TPascalUnit.Create(AGroup: TPascalUnitGroup; ANameSpace: TgirNamespace; AOptions: TgirOptions; AUnitType: TPascalUnitTypes);
+constructor TPascalUnit.Create(AGroup: TPascalUnitGroup; ANameSpace: TgirNamespace; AOptions: TgirOptions; AUnitType: TPascalUnitTypes; AUnitPrefix: String);
 const
   //CBasic = '#include <%s>'+LineEnding;
   PBasic = 'program %s_test;'+LineEnding+
@@ -2182,6 +2191,7 @@ begin
   FGroup := AGroup;
   FOptions := AOptions;
   FUnitType:=AUnitType;
+  FUnitPrefix := AUnitPrefix;
   FFinalizeSection := TPFinialization.Create(Self);
   FImplementationSection := TPImplementation.Create(Self);
   FInitializeSection := TPInitialize.Create(Self);
@@ -2310,7 +2320,7 @@ begin
   for i := 0 to FNameSpace.RequiredNameSpaces.Count-1 do
   begin
     NS := TgirNamespace(FNameSpace.RequiredNameSpaces.Items[i]);
-    NeedUnit:=CalculateUnitName(NS.NameSpace,NS.Version);
+    NeedUnit:=UnitPrefix+CalculateUnitName(NS.NameSpace,NS.Version);
 
     if FUnitType = PascalUnitTypeAll then
       InterfaceSection.UsesSection.Units.Add(' '+NeedUnit)
@@ -2377,7 +2387,7 @@ begin
   Libs := GetLibs;
   Result := TStringStream.Create('');
   Str.WriteString(IndentText('{ This is an autogenerated unit using gobject introspection (gir2pascal). Do not Edit. }',0,1));
-  Str.WriteString(IndentText('unit '+ UnitFileName+';',0,2));
+  Str.WriteString(IndentText('unit '+ UnitPrefix+UnitFileName+';',0,2));
   Str.WriteString(IndentText('{$MODE OBJFPC}{$H+}',0,2));
   if utTypes in FUnitType then
     Str.WriteString(IndentText('{$PACKRECORDS C}',0,1));
