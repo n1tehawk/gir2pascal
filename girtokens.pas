@@ -26,18 +26,30 @@ uses
   Classes;
 
 type
-  TGirToken = (gtInvalid, gtAlias, gtConstant, gtRecord, gtBitField, gtEnumeration,
+  TGirToken = (gtInvalid, gtEmpty, gtAlias, gtConstant, gtRecord, gtBitField, gtEnumeration,
                gtCallback, gtUnion, gtFunction, gtReturnValue, gtType,
                gtParameters, gtParameter, gtInstanceParameter, gtMember, gtField, gtMethod, gtArray,
-               gtDoc, gtConstructor, gtRepository, gtInclude, gtNameSpace, gtPackage,
+               gtDoc, gtDocDeprecated, gtConstructor, gtRepository, gtInclude, gtNameSpace, gtPackage,
                gtCInclude, gtClass, gtProperty, gtVirtualMethod, gtInterface,
-               gtGlibSignal, gtImplements, gtPrerequisite,gtVarArgs, gtObject, gtClassStruct, gtGType);
+               gtGlibSignal, gtImplements, gtPrerequisite,gtVarArgs, gtObject, gtClassStruct, gtGType,
+               // Direction for parameters.  in is default = no pointer. out and inout means one pointer level.
+               // If subnode is array then increase pointer level.
+               gtIn, gtOut, gtInOut
+               );
 
+  TGirVersion = object
+    Major: Integer;
+    Minor: Integer;
+    function AsString: String; // '$major.$minor'
+    function AsMajor: TGirVersion; // return as $major.0 i.e 3.0 instead of 3.8
+
+  end;
 
 
 var
   GirTokenName: array[TGirToken] of String = (
     'Invalid Name',
+    '{empty}',
     'alias',
     'constant',
     'record',
@@ -56,6 +68,7 @@ var
     'method',
     'array',
     'doc',
+    'doc-deprecated',
     'constructor',
     'repository',
     'include',
@@ -72,21 +85,100 @@ var
     'varargs',
     'object',
     'classstruct',
-    'gtype'
+    'gtype',
+    'in',
+    'out',
+    'inout'
   );
 
   function GirTokenNameToToken(AName: String): TGirToken;
+  function girVersion(AVersion: String; ADefaultMajor: Integer = -1; ADefaultMinor: Integer = -1): TGirVersion;
+  function girVersion(AMajor, AMinor: Integer): TGirVersion;
+
+  operator >= (AVersion, BVersion: TGirVersion): Boolean;
+  operator <= (AVersion, BVersion: TGirVersion): Boolean;
+  operator > (AVersion, BVersion: TGirVersion): Boolean;
 
 implementation
+uses
+  sysutils;
 
 function GirTokenNameToToken(AName: String): TGirToken;
 begin
+  if AName = '' then
+    Exit(gtEmpty);
+  try
   for Result in TGirToken do
     if GirTokenName[Result][1] <> AName[1] then
       continue
     else if GirTokenName[Result] = AName then
       Exit;
   Result := gtInvalid;
+
+  except
+    WriteLn('GirToken Exception: ',AName);
+  end;
+end;
+
+function girVersion(AVersion: String; ADefaultMajor: Integer; ADefaultMinor: Integer): TGirVersion;
+var
+  SplitPoint: Integer;
+  Minor: String;
+begin
+  if (AVersion = '') and (ADefaultMajor <> -1) and (ADefaultMinor <> -1) then
+  begin
+    Result := girVersion(ADefaultMajor, ADefaultMinor);
+    Exit;
+  end;
+  SplitPoint := Pos('.', AVersion);
+
+  if SplitPoint < 1 then
+    raise Exception.Create(Format('Invalid version string format: "%s" (length %d)', [AVersion, Length(AVersion)]));
+
+  Result.Major:=StrToInt(Copy(AVersion,1, SplitPoint-1));
+  Minor := Copy(AVersion,SplitPoint+1, MaxInt);
+  SplitPoint := Pos('.', AVersion);
+  // we are not interested in the third version chunk
+  if SplitPoint > 0 then
+    Minor := Copy(Minor,1, SplitPoint-1);
+  Result.Minor:=StrToInt(Minor);
+end;
+
+function girVersion(AMajor, AMinor: Integer): TGirVersion;
+begin
+  REsult.Major := AMajor;
+  Result.Minor := AMinor;
+end;
+
+operator >= (AVersion, BVersion: TGirVersion): Boolean;
+begin
+  Result :=     (AVersion.Major > BVersion.Major)
+            or ((AVersion.Major = BVersion.Major) and (AVersion.Minor >= BVersion.Minor));
+end;
+
+operator<=(AVersion, BVersion: TGirVersion): Boolean;
+begin
+  Result :=     (AVersion.Major < BVersion.Major)
+            or ((AVersion.Major = BVersion.Major) and (AVersion.Minor <= BVersion.Minor));
+end;
+
+operator > (AVersion, BVersion: TGirVersion): Boolean;
+begin
+  Result :=     (AVersion.Major > BVersion.Major)
+            or ((AVersion.Major = BVersion.Major) and (AVersion.Minor > BVersion.Minor));
+end;
+
+{ TGirVersion }
+
+function TGirVersion.AsString: String;
+begin
+  Result := IntToStr(Major)+'.'+IntToStr(Minor);
+end;
+
+function TGirVersion.AsMajor: TGirVersion;
+begin
+  Result.Major:=Major;
+  REsult.Minor:=0;
 end;
 
 end.

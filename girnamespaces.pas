@@ -37,7 +37,10 @@ type
     FCIncludeName: String;
     FConstants: TList;
     FCPackageName: String;
+    FCPrefix: String;
+    FDeprecatedVersion: TGirVersion;
     FFunctions: TList;
+    FMaxSymbolVersion: TGirVersion;
     FNameSpace: String;
     FOnlyImplied: Boolean;
     FOnNeedGirFile: TgirNeedGirFileEvent;
@@ -46,7 +49,7 @@ type
     FSharedLibrary: String;
     FTypes: TFPHashObjectList;
     FUnresolvedTypes: TList;
-    FVersion: String;
+    FVersion: TGirVersion;
     procedure SetOnNeedGirFile(AValue: TgirNeedGirFileEvent);
   protected
     function AddFuzzyType(AName: String; ACType: String): TGirBaseType;
@@ -69,8 +72,8 @@ type
     procedure HandleClass(ANode: TDomNode); // one step above GType. Is the object structure and it's methods. ClassStruct is like the VMT
     procedure HandleInterface(ANode: TDomNode);
     procedure AddGLibBaseTypes;
-    procedure AddType(AType: TGirBaseType);
   public
+    procedure AddType(AType: TGirBaseType);
     function LookupTypeByName(AName: String; const ACType: String; SearchOnly: Boolean = False): TGirBaseType;
     function ResolveFuzzyType(AFuzzyType: TgirFuzzyType): TGirBaseType;
     function UsesGLib: Boolean;
@@ -83,9 +86,10 @@ type
     property NameSpace: String read FNameSpace;
     property CIncludeName: String read FCIncludeName;
     property CPackageName: String read FCPackageName;
+    property CPrefix: String read FCPrefix;
     property RequiredNameSpaces: TList Read FRequiredNameSpaces;
     property SharedLibrary: String read FSharedLibrary;
-    property Version: String read FVersion;
+    property Version: TGirVersion read FVersion;
     property OnlyImplied: Boolean read FOnlyImplied;
     property Owner: TObject Read FOwner;
 
@@ -95,6 +99,10 @@ type
     property Functions: TList read FFunctions;
     property Constants: TList read FConstants;
     property UnresolvedTypes: TList read FUnresolvedTypes write FUnresolvedTypes;
+    // exclude symbols newer than this version
+    property MaxSymbolVersion: TGirVersion read FMaxSymbolVersion write FMaxSymbolVersion;
+    // exclude symbols this version and older that are marked as deprecated
+    property DeprecatedVersion: TGirVersion read FDeprecatedVersion write FDeprecatedVersion;
   end;
 
   { TgirNamespaces }
@@ -208,7 +216,7 @@ var
   Item: TgirAlias;
 begin
   Item := TgirAlias.Create(Self, ANode);
-  Types.Add(Item.Name, Item);
+  AddType(Item);
 end;
 
 procedure TgirNamespace.HandleConstant(ANode: TDomNode);
@@ -224,7 +232,7 @@ var
   Item : TgirEnumeration;
 begin
   Item := TgirEnumeration.Create(Self, ANode);
-  Types.Add(Item.Name, Item);
+  AddType(Item);
 end;
 
 procedure TgirNamespace.HandleBitField(ANode: TDomNode);
@@ -232,7 +240,7 @@ var
   Item : TgirBitField;
 begin
   Item := TgirBitField.Create(Self, ANode);
-  Types.Add(Item.Name, Item);
+  AddType(Item);
 end;
 
 procedure TgirNamespace.HandleCallback(ANode: TDOMNode);
@@ -240,7 +248,7 @@ var
   Item: TgirCallback;
 begin
   Item := TgirCallback.Create(Self, ANode);
-  Types.Add(Item.Name, Item);
+  AddType(Item);
 end;
 
 procedure TgirNamespace.HandleFunction(ANode: TDOMNode);
@@ -256,7 +264,7 @@ var
   Item: TgirUnion;
 begin
   Item := TgirUnion.Create(Self, ANode);
-  Types.Add(Item.Name, Item);
+  AddType(Item);
 end;
 
 procedure TgirNamespace.HandleRecord(ANode: TDomNode);
@@ -274,7 +282,7 @@ begin
   else
   begin
     Item := tgirRecord.Create(Self, ANode);
-    Types.Add(Item.Name, Item);
+    AddType(Item);
   end;
 
 end;
@@ -284,7 +292,7 @@ var
   Item: TgirObject;
 begin
   Item := TgirObject.Create(Self, ANode);
-  Types.Add(Item.Name, Item);
+  AddType(Item);
 end;
 
 procedure TgirNamespace.HandleGType(ANode: TDomNode);
@@ -292,7 +300,7 @@ var
   Item: TgirGType;
 begin
   Item := TgirGType.Create(Self, ANode);
-  Types.Add(Item.Name, Item);
+  AddType(Item);
 end;
 
 procedure TgirNamespace.HandleClassStruct(ANode: TDomNode);
@@ -328,7 +336,7 @@ procedure TgirNamespace.AddGLibBaseTypes;
     if TranslatedName <> '' then
       NativeType.TranslatedName:=TranslatedName;
     NativeType.ImpliedPointerLevel:=3;
-    Types.Add(NativeType.Name, NativeType);
+    AddType(NativeType);
     Result := NativeType;
 
   end;
@@ -347,6 +355,8 @@ begin
   if (PrevFound <> nil) and (PrevFound.ObjectType = otFuzzyType)  then
   begin
     (PrevFound as TgirFuzzyType).ResolvedType := AType;
+    //WriteLn('Resolved FuzzyType: ', AType.Name);
+    FUnresolvedTypes.Remove(PrevFound);
   end;
   //if PrevFound <> nil then WriteLn('Found Name Already Added: ', AType.Name, ' ', PrevFound.ObjectType, ' ', AType.ObjectType);
   if PrevFound = nil then
@@ -387,6 +397,7 @@ begin
       begin
         Fuzzy.ResolvedType := Tmp;
         Tmp.ImpliedPointerLevel:=Fuzzy.ImpliedPointerLevel;
+        Tmp.DeprecatedOverride:= Tmp.DeprecatedOverride or Fuzzy.DeprecatedOverride;
         i := FuzzyI+1;
         Fuzzy := nil;
         //WriteLn('Resolved Fuzzy Type: ', Tmp.CType);
@@ -477,6 +488,9 @@ begin
   if (PlainCType = 'GType')  {or (AName = 'Type')} or (AName = 'GType')then
     AName := 'GLib.Type';
 
+  if AName = 'any' then
+    AName := 'gpointer';
+
   FPos := Pos('.', AName);
 
   if FPos > 0 then  // type includes namespace "NameSpace.Type"
@@ -506,7 +520,6 @@ begin
       Result := NS.AddFuzzyType(AName, ACType);
   if Result <> nil then
     Result.ImpliedPointerLevel:=PointerLevel;
-
 
 end;
 
@@ -572,15 +585,18 @@ begin
   FNameSpace:=Node.GetAttribute('name');
   FRequiredNameSpaces := AIncludes;
   FSharedLibrary:=Node.GetAttribute('shared-library');
-  FVersion:=Node.GetAttribute('version');
+  FVersion:=girVersion(Node.GetAttribute('version'));
+  FCPrefix:=Node.GetAttribute('c:prefix');
   SetCInclude;
   SetPackage;
-  girError(geDebug, Format('Creating namespace=%s Version=%s LibName=%s',[FNameSpace, FVersion, FSharedLibrary]));
+  girError(geDebug, Format('Creating namespace=%s Version=%s LibName=%s',[FNameSpace, FVersion.AsString, FSharedLibrary]));
 
   FConstants := TList.Create;
   FFunctions := TList.Create;
   FTypes := TFPHashObjectList.Create(True);
   FUnresolvedTypes := TList.Create;
+
+  FMaxSymbolVersion.Major:=MaxInt;
 
   if FNameSpace = 'GLib' then
     AddGLibBaseTypes;

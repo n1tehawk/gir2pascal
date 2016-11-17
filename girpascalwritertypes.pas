@@ -49,7 +49,7 @@ type
   private
     FDynamicFunctions: Boolean;
   public
-    constructor Create(ADynamicFunctions: Boolean);
+    constructor Create(ADynamicFunctions: Boolean); reintroduce;
     function AsString: String; override;
   end;
 
@@ -111,7 +111,7 @@ type
     FFunctionSection: TPDeclarationFunctions;
     FUsesSection: TPUses;
   public
-    constructor Create(AOwner: TObject; AUses: TPUses; ADynamicFunctions: Boolean);
+    constructor Create(AOwner: TObject; AUses: TPUses; ADynamicFunctions: Boolean); reintroduce;
     destructor Destroy; override;
     function AsString: String; override;
     property UsesSection: TPUses read FUsesSection;
@@ -155,7 +155,6 @@ type
     FUnitPrefix: String;
     FWriter: TObject;//girPascalWriter;
     FUnits: TFPList;
-    //Units: array[TPascalUnitType] of TPascalUnit;
     function GetUnitForType(AType: TPascalUnitType): TPascalUnit;
   public
     constructor Create(AWriter: TObject{TgirPascalWriter}; ANameSpace: TgirNamespace; AOptions: TgirOptions; AUnitPrefix: String);
@@ -218,7 +217,7 @@ type
     procedure WriteFunctionTypeAndReturnType(AItem: TgirFunction; out AFunctionType, AFunctionReturnType: String);
     function WriteFunctionParams(AParams: TgirParamList; AArgs: PString = nil; AIncludeInstanceParam: Boolean = False): String;
     function WriteFunction(AFunction: TgirFunction; AItem: TGirBaseType; AIsMethod: Boolean; AWantWrapperForObject: Boolean; AFunctionList: TStrings; AExistingUsedNames: TStringList = nil): String;
-    function WriteParamAsString(AParam: TgirTypeParam; AIndex: Integer;  out ABitSizeSpecified: Boolean; AFirstParam: PString = nil; AExistingUsedNames: TStringList = nil): String;
+    function WriteParamAsString(AParentName: String; AParam: TgirTypeParam; AIndex: Integer;  out ABitSizeSpecified: Boolean; AFirstParam: PString = nil; AExistingUsedNames: TStringList = nil): String;
     function WriteRecord(ARecord: TgirRecord; ABaseIndent: Integer = 0; AIsUnion: Boolean = False): String;
     function WriteUnion(AUnion: TgirUnion; ASkipRecordName: Boolean; ABaseIndent: Integer = 0): String;
     function ParenParams(const AParams: String; const AForceParens: Boolean = False): String;
@@ -246,7 +245,8 @@ type
   public
     constructor Create(AGroup: TPascalUnitGroup; ANameSpace: TgirNamespace; AOptions: TgirOptions; AUnitType: TPascalUnitTypes; AUnitPrefix: String);
     destructor Destroy; override;
-    procedure ProcessConsts(AList:TList); // of TgirBaseType descandants
+    function  MeetsVersionConstraints(AItem: TGirBaseType): Boolean;
+    procedure ProcessConsts(AList: TList; AUsedNames: TStringList); // of TgirBaseType descandants
     procedure ProcessTypes(AList:TFPHashObjectList); // of TgirBaseType descandants
     procedure ProcessFunctions(AList:TList);// of TgirFunction
     procedure GenerateUnit;
@@ -335,6 +335,7 @@ begin
   FUnits := TFPList.Create;
   FUnitPrefix:=AUnitPrefix;
   FSimpleUnit := ([goSeperateConsts, goClasses, goObjects] * AOptions ) = [];
+  FUnitPrefix:=AUnitPrefix;
 
   if FSimpleUnit then
   begin
@@ -369,13 +370,31 @@ begin
 end;
 
 procedure TPascalUnitGroup.GenerateUnits;
+  function CollectFunctionNames: TStringList;
+  var
+    i: Integer;
+  begin
+    Result := TStringList.Create;
+    Result.Duplicates:=dupError;
+    if UnitForType[utConsts] <> UnitForType[utFunctions] then
+      Exit;
+    Result.Capacity := FNameSpace.Functions.Count;
+    for i := 0 to FNameSpace.Functions.Count-1 do
+      Result.Add(TgirFunction(FNameSpace.Functions.Items[i]).CIdentifier);
+
+    Result.Sorted:=True;
+  end;
+
 var
   PUnit: TPascalUnit;
+  lUsedNames: TStringList;
 begin
   for Pointer(PUnit) in FUnits do
     if Assigned(PUnit) then
        PUnit.GenerateUnit;
-  UnitForType[utConsts].ProcessConsts(FNameSpace.Constants);
+  lUsedNames := CollectFunctionNames;
+  UnitForType[utConsts].ProcessConsts(FNameSpace.Constants, lUsedNames);
+  lUsedNames.Free;
   UnitForType[utTypes].ProcessTypes(FNameSpace.Types);
   UnitForType[utFunctions].ProcessFunctions(FNameSpace.Functions);
   for Pointer(PUnit) in FUnits do
@@ -559,12 +578,12 @@ end;
 
 function TPascalUnit.GetUnitName: String;
 begin
-  Result := CalculateUnitName(FNameSpace.NameSpace, FNameSpace.Version);
+  Result := FGroup.FUnitPrefix + CalculateUnitName(FNameSpace.NameSpace, FNameSpace.Version.AsString);
 end;
 
 function TPascalUnit.GetUnitFileName: String;
 begin
-  Result := UnitPrefix+UnitName+GetUnitPostfix;
+  Result := {UnitPrefix+}UnitName+GetUnitPostfix;
 end;
 
 function TPascalUnit.GetUnitPostfix: String;
@@ -677,13 +696,18 @@ begin
 
   if (AType.CType = '') then //(AType.Name = '') then
   begin
-    girError(geWarn, 'Type.Ctype undefined! : '+ Atype.Name);
+    //girError(geWarn, 'Type.Ctype undefined! : '+ Atype.Name);
     //Halt;
 
   end;
   if ProcessLevel > 0 then
   begin
     WriteForwardDefinition(AType);
+    if AType.Deprecated and not AType.DeprecatedOverride and not (MeetsVersionConstraints(AType))then
+    begin
+      AType.DeprecatedOverride:=True;
+      girError(girErrors.geWarn, Format('Type %s is deprecated but is pulled in by a field or parameter',[AType.CType]));
+    end;
     if AType.InheritsFrom(TgirCallback) or AType.InheritsFrom(TgirBitField) then
       AForceWrite:=True;
     if not AForceWrite then
@@ -694,6 +718,10 @@ begin
     //WriteLn('Already Written Type Used: ', AType.TranslatedName);
     Exit;
   end;
+
+
+  if not MeetsVersionConstraints(AType) then
+    Exit;
 
   //if AForceWrite then
   //  WriteLn('ForceWriting: ', AType.CType);
@@ -756,6 +784,7 @@ begin
         if CTypesType <> '' then
         begin
           FuzzyType.TranslatedName:= CTypesType;
+          //FuzzyType.TranslatedName:= FNameSpace.CPrefix + FuzzyType.Name;
           FuzzyType.Writing := msWritten;
         end;
       end;
@@ -880,6 +909,7 @@ var
   ResolvedForName: String;
   CType: TGirBaseType = nil;
   ProperUnit: TPascalUnit;
+  TargetType: TGirBaseType = nil;
 begin
   ProperUnit := FGroup.GetUnitForType(utTypes);
   if ProperUnit <> Self then begin
@@ -887,12 +917,18 @@ begin
     Exit;
   end;
   ResolveTypeTranslation(AItem);
-  ResolveTypeTranslation(AItem.ForType);
+
+  TargetType := AItem.ForType;
+
+  ResolveTypeTranslation(TargetType);
+
+  if TargetType.ClassType = TgirFuzzyType then writeln('Alias for type assigned to fuzzy type! ', TargetType.Name);
+
 
   // some aliases are just for the parser to connect a name to an alias
   if AItem.CType = '' then
     Exit;
-  ResolvedForName := aItem.ForType.TranslatedName;
+  ResolvedForName := TargetType.TranslatedName;
   if ResolvedForName = '' then
     begin
       {
@@ -941,7 +977,7 @@ var
   CName: String;
   TypeName: String;
   ProperUnit: TPascalUnit;
-
+  IntType: String;
 begin
   ProperUnit := FGroup.GetUnitForType(utTypes);
   if ProperUnit <> Self then begin
@@ -960,9 +996,14 @@ begin
 
     TypeName := ': '+AItem.TranslatedName;
 
+    if AItem.NeedsSignedType then
+      IntType := 'Integer'
+    else
+      IntType := 'DWord';
+
     // yes we cheat a little here using the const section to write type info
     ConstSection.Lines.Add('type');
-    ConstSection.Lines.Add(IndentText(AItem.TranslatedName+' = Integer;', 2,0));
+    ConstSection.Lines.Add(IndentText(AItem.TranslatedName+' = '+IntType+';', 2,0));
     ConstSection.Lines.Add('const');
   end
   else
@@ -1131,6 +1172,10 @@ begin
     ProperUnit.HandleFunction(AItem);
     Exit;
   end;
+
+  if not MeetsVersionConstraints(AItem) then
+    Exit; // ==>
+
   WriteFunctionTypeAndReturnType(AItem, RoutineType, Returns);
   Params := WriteFunctionParams(AItem.Params);
   Postfix := ' external;';// '+UnitName+'_library;';
@@ -1164,7 +1209,7 @@ begin
   Result := '';
   OptionsIndicateWrapperMethod:= FUnitType = PascalUnitTypeAll;
   // we skip deprecated functions
-  if AFunction.Deprecated and not (goIncludeDeprecated in FOptions) then //and (CompareStr(AFunction.DeprecatedVersion, NameSpace.Version) >=  0) then
+  if not MeetsVersionConstraints(AFunction) then
     Exit;
 
   // some abstract functions that are to be implemented by a module and shouldn't be declared. There is no indicator in the gir file that this is so :(
@@ -1177,7 +1222,14 @@ begin
   if AWantWrapperForObject then
     InLineS:=' inline;';
 
-  if AFunction.Deprecated then DeprecatedS :=' deprecated ''Since ' + NameSpace.NameSpace + ' ' + AFunction.DeprecatedVersion+' '+StringReplace(AFunction.DeprecatedMsg,'''','`', [rfReplaceAll])+''';';
+  if AFunction.Deprecated then
+  begin
+    if AFunction.DeprecatedMsg = '' then
+      DeprecatedS :=' deprecated ''Since ' + NameSpace.NameSpace + ' ' + AFunction.DeprecatedVersion.AsString+' '+StringReplace(AFunction.DeprecatedMsg,'''','`', [rfReplaceAll])+''';'
+    else
+      DeprecatedS :=' deprecated '''+AFunction.DeprecatedMsg+''';';
+  end;
+
   // this fills in the values for procedure/function and the return type
   WriteFunctionTypeAndReturnType(AFunction, RoutineType, Returns);
 
@@ -1328,6 +1380,9 @@ var
     Comment: String='';
     OptionsIndicateWrapperMethod: Boolean;
   begin
+    Result := '';
+    if AProperty.Deprecated and not (goIncludeDeprecated in FOptions) then
+      Exit;
     OptionsIndicateWrapperMethod:=FUnitType = PascalUnitTypeAll;
     if not OptionsIndicateWrapperMethod or (goNoWrappers in FOptions) then
       Exit('');
@@ -1360,7 +1415,7 @@ var
       Exit;
     end;
 
-    Param := WriteParamAsString(AParam,i, ParamIsBitSized, nil, UsedNames);
+    Param := WriteParamAsString(AItem.name, AParam,i, ParamIsBitSized, nil, UsedNames);
 
     if ParamIsBitSized then
       PackedBitsAddEntry(PackedBits, AItem, PackedBitsFieldCount, Param, TypeDecl)
@@ -1371,7 +1426,7 @@ var
 
   procedure AddLinesIfSet(AList: TStrings; const TextIn: String);
   begin
-    if TextIn <> '' then
+    if Trim(TextIn) <> '' then
       AList.Add(TextIn);
   end;
 
@@ -1380,11 +1435,14 @@ var
     SetFound: Boolean;
     PropType: String;
   begin
+
+    if not MeetsVersionConstraints(Field) then
+      Exit;
+
     AddedBitSizedType:=False;
     // FIRST PASS
     if AFirstPass then
     begin
-
       case Field.ObjectType of
         otVirtualMethod: ; // ignore. may be usefull if we wrap this in pascal classes instead of objects. Is already written in the class struct
         otCallback,
@@ -1582,8 +1640,25 @@ begin
     Exit;
   end;
   ResolveTypeTranslation(AItem);
+  if AItem.ImpliedPointerLevel > 0 then
+    WriteForwardDefinition(AItem);
   WantTypeSection.Lines.Add(WriteUnion(AItem, False, 2));
 
+end;
+
+function TPascalUnit.MeetsVersionConstraints(AItem: TGirBaseType): Boolean;
+begin
+  Result := not AItem.Deprecated;
+  if not Result then
+    Result := goIncludeDeprecated in FOptions;
+
+  if not Result then
+    Result := AItem.DeprecatedVersion >= FNameSpace.DeprecatedVersion;
+
+  if not Result then
+    Result := AItem.DeprecatedOverride;
+
+  Result := Result and (AItem.Version <= FNameSpace.MaxSymbolVersion);
 end;
 
 procedure TPascalUnit.WriteForwardDefinition(AType: TGirBaseType);
@@ -1700,7 +1775,10 @@ begin
   end
   else
   begin
-    CBName:=MakePascalTypeFromCType(AItem.CType);
+    if AItem.CType <> '' then
+      CBName:=MakePascalTypeFromCType(AItem.CType)
+    else
+      CBName:=MakePascalTypeFromCType(NameSpace.CPrefix+AItem.Name);
     Symbol := ' = ';
   end;
 
@@ -1714,7 +1792,8 @@ procedure TPascalUnit.WriteFunctionTypeAndReturnType(AItem: TgirFunction;
   out AFunctionType, AFunctionReturnType: String);
 begin
   ResolveTypeTranslation(AItem.Returns.VarType);
-  if (AItem.Returns.VarType.CType = 'void') and (AItem.Returns.PointerLevel = 0) then
+  if ((AItem.Returns.VarType.CType = 'void') or (AItem.Returns.VarType.Name = 'none'))
+  and (AItem.Returns.PointerLevel = 0) then
   begin
     AFunctionType:='procedure';
     AFunctionReturnType := '; cdecl;';
@@ -1743,7 +1822,7 @@ begin
       // IsInstanceParam is only the ever the first param so this is safe if it's the
       // only Param and AArgs is not updated. AArgs := @Self[, ;] is set in WriteFunction
       if AIncludeInstanceParam or (not AIncludeInstanceParam and not AParams.Param[i].IsInstanceParam) then
-        Result := Result+WriteParamAsString(AParams.Param[i], i, Dummy, @ArgName)
+        Result := Result+WriteParamAsString('', AParams.Param[i], i, Dummy, @ArgName)
       else
         Continue;
 
@@ -1826,7 +1905,7 @@ begin
     end;
 end;
 
-function TPascalUnit.WriteParamAsString(AParam: TgirTypeParam; AIndex: Integer; out ABitSizeSpecified: Boolean; AFirstParam: PString = nil; AExistingUsedNames: TStringList = nil): String;
+function TPascalUnit.WriteParamAsString(AParentName: String; AParam: TgirTypeParam; AIndex: Integer; out ABitSizeSpecified: Boolean; AFirstParam: PString; AExistingUsedNames: TStringList): String;
 var
   PT: String;
   PN: String;
@@ -1840,7 +1919,6 @@ begin
     Result := 'args: array of const';// 'args: varargs'; // varargs must be append to the function definition also this is more clear to the user
     exit;
   end;
-
 
   IsArray := AParam.InheritsFrom(TgirArray) ;
 
@@ -1857,7 +1935,6 @@ begin
     PN := AnArray.ParentFieldName
   else
     PN := AParam.Name;
-
 
   if PN = '' then
     PN := 'param'+IntToStr(AIndex);
@@ -1882,6 +1959,9 @@ begin
   end;
   Result := PN +': '+PT;
 
+  if PN = PT then
+    WriteLn('Dup name and type! : ',AParam.Name,' ' , AParam.VarType.Name, ' ', PN + ': '+ PT);
+
   ProcessType(AParam.VarType, AParam.PointerLevel = 0); // will skip if written
 end;
 
@@ -1898,7 +1978,7 @@ var
 //    Iten
   begin
     Result := False;
-    Param := WriteParamAsString(TgirTypeParam(AField),i, Result);
+    Param := WriteParamAsString(ARecord.Name, TgirTypeParam(AField),i, Result);
     if Result and not AIsUnion then
       PackedBitsAddEntry(PackedBits, ARecord, PackedBitsCount, Param, TypeDecl)
     else
@@ -1967,7 +2047,7 @@ begin
       Field := AUnion.Fields.Field[i];
       case Field.ObjectType of
         otArray,
-        otTypeParam   : Union.Add(IndentText(IntToStr(i)+ ' : ' +ParenParams(WriteParamAsString(TgirTypeParam(Field),i, Dummy))+';',ABaseIndent+ 4,0));
+        otTypeParam   : Union.Add(IndentText(IntToStr(i)+ ' : ' +ParenParams(WriteParamAsString(AUnion.NAme, TgirTypeParam(Field),i, Dummy))+';',ABaseIndent+ 4,0));
         otCallback    : Union.Add(IndentText(IntToStr(i)+ ' : ' +ParenParams(WriteCallBack(TgirCallback(Field),True)),ABaseIndent+4,0));
         otRecord      : Union.Add(IndentText(IntToStr(i)+ ' : ' +ParenParams(WriteRecord(TgirRecord(Field),6, True))+';',ABaseIndent+4,0));
            //WriteFunction(AFunction, AItem, AIsMethod, AWantWrapperForObject, AFunctionList): String;
@@ -2123,15 +2203,12 @@ var
   Sucess: Boolean;
   TestName: String;
 begin
+  Result := AName;
+
   for Name in PascalReservedWords do
     if Name = LowerCase(AName) then
       Result := Aname+'_';
-  If Result = '' then
-    Result := AName;
-  if AName = 'CSET_A_2_Z' then
-    Result := 'CSET_A_2_Z_UPPER';
-  if AName = 'CSET_a_2_z' then
-    Result := 'CSET_a_2_z_lower';
+
   Result := StringReplace(Result, '-','_',[rfReplaceAll]);
   Result := StringReplace(Result, ' ','_',[rfReplaceAll]);
   Result := StringReplace(Result, '.','_',[rfReplaceAll]);
@@ -2143,7 +2220,7 @@ begin
     repeat
       Inc(Sanity);
       try
-        AExistingUsedNames.Add(TestName);
+        AExistingUsedNames.Add(LowerCase(TestName));
         Result := TestName;
         Sucess := True;
       except
@@ -2164,7 +2241,7 @@ begin
   begin
     RawName := ABaseType.CType;
     if RawName = '' then
-      RawName:= ABaseType.Name;
+      RawName:= NameSpace.CPrefix+ABaseType.Name;
     ABaseType.TranslatedName:=MakePascalTypeFromCType(RawName, 0);
   end;
 end;
@@ -2201,6 +2278,7 @@ begin
   FDynamicEntryNames.Sorted:=True;
   FDynamicEntryNames.Duplicates := dupIgnore;
   FNameSpace := ANameSpace;
+
   if goWantTest in FOptions then
   begin
     //FTestCFile := TStringStream.Create('');
@@ -2234,13 +2312,13 @@ begin
   inherited Destroy;
 end;
 
-procedure TPascalUnit.ProcessConsts(AList: TList);
+procedure TPascalUnit.ProcessConsts(AList: TList; AUsedNames: TStringList);
   function WriteConst(AConst: TgirConstant; Suffix: String = ''): String;
   begin
     if AConst.IsString then
-      Result := SanitizeName(AConst.Name) + Suffix+' = '+QuotedStr(AConst.Value)+';'
+      Result := AConst.CName + Suffix+' = '+QuotedStr(AConst.Value)+';'
     else
-      Result := SanitizeName(AConst.Name) + Suffix+' = '+AConst.Value+';';
+      Result := AConst.CName + Suffix+' = '+AConst.Value+';';
   end;
 
 var
@@ -2263,16 +2341,18 @@ begin
       Sanity := 0;
       Suffix := '';
       Item := TgirConstant(AList.Items[i]);
-      //if Item.ClassType <> TgirConstant then ; // raise error
-        Entry := LowerCase(SanitizeName(Item.Name));
 
       repeat
         try
+          Entry := SanitizeName(Item.CName+Suffix, AUsedNames);
+          if Entry <> Item.CName+Suffix then
+            raise Exception.Create('');
           Consts.AddObject(Entry, TObject(PtrUInt(NewConst.Lines.Count)));
           break;
         except
-          Suffix := '__'+IntToStr(Sanity);
-          Entry := LowerCase(SanitizeName(Item.Name))+Suffix;
+          if Sanity > 0 then
+            Suffix := '__'+IntToStr(Sanity)
+          else Suffix := '_';
         end;
         Inc(Sanity);
       until Sanity > 10;
@@ -2293,6 +2373,8 @@ begin
   for i := 0 to AList.Count-1 do
   begin
     BaseType := TGirBaseType(AList.Items[i]);
+    if not MeetsVersionConstraints(BaseType) then
+      Continue;
     ProcessType(BaseType);
   end;
 
@@ -2306,6 +2388,8 @@ begin
   for i := 0 to AList.Count-1 do
   begin
     Func := TgirFunction(AList.Items[i]);
+    if not MeetsVersionConstraints(Func) then
+      Continue;
     HandleFunction(Func);
   end;
 end;
@@ -2320,7 +2404,7 @@ begin
   for i := 0 to FNameSpace.RequiredNameSpaces.Count-1 do
   begin
     NS := TgirNamespace(FNameSpace.RequiredNameSpaces.Items[i]);
-    NeedUnit:=UnitPrefix+CalculateUnitName(NS.NameSpace,NS.Version);
+    NeedUnit:=FGroup.FUnitPrefix + CalculateUnitName(NS.NameSpace,NS.Version.AsString);
 
     if FUnitType = PascalUnitTypeAll then
       InterfaceSection.UsesSection.Units.Add(' '+NeedUnit)
@@ -2387,7 +2471,7 @@ begin
   Libs := GetLibs;
   Result := TStringStream.Create('');
   Str.WriteString(IndentText('{ This is an autogenerated unit using gobject introspection (gir2pascal). Do not Edit. }',0,1));
-  Str.WriteString(IndentText('unit '+ UnitPrefix+UnitFileName+';',0,2));
+  Str.WriteString(IndentText('unit '+ {UnitPrefix+}UnitFileName+';',0,2));
   Str.WriteString(IndentText('{$MODE OBJFPC}{$H+}',0,2));
   if utTypes in FUnitType then
     Str.WriteString(IndentText('{$PACKRECORDS C}',0,1));
@@ -2444,6 +2528,7 @@ function TPDeclarationList.AsString: String;
 var
   i: Integer;
 begin
+  Result := '';
   for i := 0 to Count-1 do
     begin
       Result := Result+Declarations[i].AsString+LineEnding;

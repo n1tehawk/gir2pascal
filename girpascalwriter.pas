@@ -60,6 +60,7 @@ begin
   FUnits := TList.Create;
   FDefaultUnitExtension:='.pas';
   FOptions:=AOptions;
+  FUnitPrefix:=AUnitPrefix;
 end;
 
 procedure TgirPascalWriter.GenerateUnits;

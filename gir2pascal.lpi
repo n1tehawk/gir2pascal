@@ -30,20 +30,18 @@
     <RunParams>
       <local>
         <FormatVersion Value="1"/>
-        <CommandLineParams Value="-wCni /home/andrew/programming/lazarus-ccr/applications/gobject-introspection/girfiles-from-felix/Gtk-3.0.gir -o /tmp/gir-out"/>
-        <LaunchingApplication PathPlusParams="/usr/bin/gnome-terminal -t 'Lazarus Run Output' -e '$(LazarusDir)/tools/runwait.sh $(TargetCmdLine)'"/>
+        <CommandLineParams Value="-wni /home/andrew/programming/lazarus-ccr.old/applications/gobject-introspection/girfiles-from-felix/Gtk-3.0.gir -o /tmp/gir-out"/>
+        <LaunchingApplication Use="True" PathPlusParams="/usr/bin/gnome-terminal -t 'Lazarus Run Output' -e '$(LazarusDir)/tools/runwait.sh $(TargetCmdLine)'"/>
       </local>
     </RunParams>
     <Units Count="11">
       <Unit0>
         <Filename Value="gir2pascal.lpr"/>
         <IsPartOfProject Value="True"/>
-        <UnitName Value="gir2pascal"/>
       </Unit0>
       <Unit1>
         <Filename Value="girpascalwriter.pas"/>
         <IsPartOfProject Value="True"/>
-        <UnitName Value="girpascalwriter"/>
       </Unit1>
       <Unit2>
         <Filename Value="girnamespaces.pas"/>
@@ -83,7 +81,6 @@
       <Unit9>
         <Filename Value="girpascalwritertypes.pas"/>
         <IsPartOfProject Value="True"/>
-        <UnitName Value="girpascalwritertypes"/>
       </Unit9>
       <Unit10>
         <Filename Value="commandlineoptions.pas"/>
@@ -101,12 +98,6 @@
       <IncludeFiles Value="$(ProjOutDir)"/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
-    <Other>
-      <CompilerMessages>
-        <UseMsgFile Value="True"/>
-      </CompilerMessages>
-      <CompilerPath Value="$(CompPath)"/>
-    </Other>
   </CompilerOptions>
   <Debugging>
     <Exceptions Count="4">

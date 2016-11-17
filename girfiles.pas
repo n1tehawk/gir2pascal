@@ -24,7 +24,7 @@ unit girFiles;
 interface
 
 uses
-  Classes, SysUtils, DOM, girNameSpaces, girParser;
+  Classes, SysUtils, DOM, girNameSpaces, girParser, CommandLineOptions;
 
 type
 
@@ -35,16 +35,19 @@ type
     FNameSpaces: TgirNamespaces;
     FOnNeedGirFile: TgirNeedGirFileEvent;
     FOwner: TObject;
+    FCmdOptions: TCommandLineOptions;
     procedure ParseNode(ANode: TDomNode);
     procedure SetOnNeedGirFile(AValue: TgirNeedGirFileEvent);
     procedure SetOwner(const AValue: TObject);
     procedure ParseIncludeNode(ANode: TDomNode; AIncludes: TList);
+    procedure CheckVersionLimits(const ANameSpace: TgirNamespace);
+    function CheckVersionOptions(const ANamespace: String; var AMajor, AMinor: Integer): Boolean;
   public
-    constructor Create(AOwner: TObject);
+    constructor Create(AOwner: TObject; AOptions: TCommandLineOptions);
     destructor Destroy; override;
     procedure ParseXMLDocument(AXML: TXMLDocument);
     property NameSpaces: TgirNamespaces read FNameSpaces;
-    property Owner: TObject read FOwner write SetOwner;
+    property Owner: TObject read FOwner write SetOwner; // TGirConsoleConverter
     property OnNeedGirFile: TgirNeedGirFileEvent read FOnNeedGirFile write SetOnNeedGirFile;
 
   end;
@@ -79,6 +82,7 @@ begin
           girError(geDebug, 'Adding Namespace '+NS.NameSpace+' to NameSpaces');
           FNameSpaces.Add(NS);
           girError(geDebug, 'Added Namespace '+NS.NameSpace);
+          CheckVersionLimits(NS);
           NS.ParseNode(Node);
         end;
       gtPackage, gtCInclude: ;// ignore for now
@@ -126,10 +130,67 @@ begin
   end;
 end;
 
+procedure TgirFile.CheckVersionLimits(const ANameSpace: TgirNamespace);
 
-constructor TgirFile.Create(AOwner: TObject);
+
+  function SplitVersion(AVersionStr: String; out AVersion: TGirVersion): Boolean;
+  begin
+    try
+      AVersion := girVersion(AVersionStr);
+      Result := True;
+    except
+      Result := False;
+    end;
+  end;
+
+
+  function SplitNameSpaceVersionCheck(AOptionName: String; var AVersion: TGirVersion): Boolean;
+  var
+    i: Integer;
+  begin
+    if FCmdOptions.HasOption(AOptionName) then
+    with FCmdOptions.OptionValues(AOptionName) do
+    begin
+      for i := 0 to Count-1 do
+      begin
+        if Lowercase(ANameSpace.NameSpace)+'-' = Lowercase(Copy(Strings[i], 1, Length(ANameSpace.NameSpace)+1)) then
+        begin
+          Result := SplitVersion(Copy(Strings[i], Length(ANameSpace.NameSpace)+2, MaxInt), AVersion);
+          break;
+        end;
+      end;
+
+    end;
+  end;
+
+var
+  lVersion: TGirVersion;
+begin
+  if SplitNameSpaceVersionCheck('max-version', lVersion) then
+    ANameSpace.MaxSymbolVersion := lVersion
+  else
+    ANameSpace.MaxSymbolVersion := girVersion(MaxInt, MaxInt);
+
+
+  if SplitNameSpaceVersionCheck('keep-deprecated-version', lVersion) then
+    ANameSpace.DeprecatedVersion := lVersion
+  else
+    ANameSpace.DeprecatedVersion := girVersion(MaxInt, MaxInt);
+
+
+end;
+
+function TgirFile.CheckVersionOptions(const ANamespace: String; var AMajor, AMinor: Integer): Boolean;
+begin
+  Result := False;
+
+end;
+
+
+constructor TgirFile.Create(AOwner: TObject; AOptions: TCommandLineOptions);
 begin
  Owner := AOwner;
+ FCmdOptions := AOptions;
  FNameSpaces := TgirNamespaces.Create(Self);
 end;
 

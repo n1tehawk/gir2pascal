@@ -35,37 +35,52 @@ type
                     otGType, otInterface, otMethod, otNativeType, otObject, otProperty,
                     otRecord, otTypeParam, otUnion, otVirtualMethod);
 
+
   { TGirBaseType }
 
   TGirBaseType = class
   private
     FBits: Integer;
     FCType: String;
+    FDeprecated: Boolean;
+    FDeprecatedMsg: String;
+    FDeprecatedOverride: Boolean;
+    FDeprecatedVersion: TGirVersion;
     FDoc: String;
     FForwardDefinitionWritten: Boolean;
+    FGLibGetType: String;
     FHasFields: Boolean;
     FImpliedPointerLevel: Integer;
     FName: String;
     FObjectType: TGirObjectType;
+    FDisguised: Boolean;
     FOwner: TObject;
     FTranslatedName: String;
-    FVersion: String;
+    FVersion: TGirVersion;
     FWriting: TGirModeState;
     procedure SetImpliedPointerLevel(AValue: Integer);
     function MaybeResolvedType: TGirBaseType;
+    function GetPointerLevelFromCType(ACType: String = ''): Integer;
   public
     constructor Create(AOwner: TObject; ANode: TDomNode); virtual;
     property CType: String read FCType write FCType;
+    property GLibGetType: String read FGLibGetType;
     property Name: String read FName;
     property TranslatedName: String read FTranslatedName write FTranslatedName;
     property ImpliedPointerLevel: Integer read FImpliedPointerLevel write SetImpliedPointerLevel; // only grows
     property Owner: TObject Read FOwner; // TgirNameSpace
     property Doc: String read FDoc;
     property Bits: Integer read FBits;
-    property Version: String read FVersion;
+    property Version: TGirVersion read FVersion;
     property ForwardDefinitionWritten: Boolean read FForwardDefinitionWritten write FForwardDefinitionWritten;
     property Writing: TGirModeState read FWriting write FWriting;
+    property Disguised: Boolean read FDisguised; // only access this type with the functions given not fieids directly.
     property ObjectType: TGirObjectType read FObjectType;
+    property Deprecated: Boolean read FDeprecated;
+    property DeprecatedMsg: String read FDeprecatedMsg;
+    property DeprecatedVersion: TGirVersion read FDeprecatedVersion;
+    { if an object that is not deprecated depends on this deprecated item then override it. }
+    property DeprecatedOverride: Boolean read FDeprecatedOverride write FDeprecatedOverride;
   end;
 
   { TgirNativeTypeDef }
@@ -142,6 +157,8 @@ type
   private
     FFixedSize: Integer;
     FParentFieldName: String;
+    FNode: TDOMNode;
+    function GetBestPointerLevel: Integer; // only works while the Constructor is active.
   public
     constructor Create(AOwner: TObject; ANode: TDomNode); override;
     property FixedSize: Integer read FFixedSize;
@@ -152,6 +169,7 @@ type
 
   TgirConstant = class(TGirBaseType)
   private
+    FCName: String;
     FIsString: Boolean;
     FTypeDecl: TGirBaseType;
     FValue: String;
@@ -160,6 +178,7 @@ type
     property TypeDecl: TGirBaseType read FTypeDecl;
     property Value: String read FValue;
     property IsString: Boolean read FIsString;
+    property CName: String read FCName;
   end;
 
   { TgirEnumeration }
@@ -184,12 +203,15 @@ type
   TgirEnumeration = class(TGirBaseType)
   private
     FMembers: TgirEnumList;
-    procedure AddMember(AName, AValue, ACIdentifier: String);
+    FNeedsSignedType: Boolean;
+    FNotIntTypeEnum: Boolean;
+    procedure AddMember(AName, AValue, ACIdentifier: String; Node: TDomElement);
     procedure HandleFunction(ANode: TDomNode);
   public
     constructor Create(AOwner: TObject; ANode: TDomNode); override;
     destructor Destroy; override;
     property Members: TgirEnumList read FMembers;
+    property NeedsSignedType: Boolean read FNeedsSignedType;
   end;
 
   { TgirBitField }
@@ -227,9 +249,6 @@ type
   TgirFunction = class(TGirBaseType)
   private
     FCIdentifier: String;
-    FDeprecated: Boolean;
-    FDeprecatedMsg: String;
-    FDeprecatedVersion: String;
     FParams: TgirParamList;
     FReturns: TgirFunctionReturn;
     FThrowsGError: Boolean;
@@ -239,9 +258,6 @@ type
     property Params: TgirParamList read FParams;
     property Returns: TgirFunctionReturn read FReturns;
     property CIdentifier: String read FCIdentifier;
-    property Deprecated: Boolean read FDeprecated;
-    property DeprecatedMsg: String read FDeprecatedMsg;
-    property DeprecatedVersion: String read FDeprecatedVersion;
     property ThrowsGError: Boolean read FThrowsGError write FThrowsGError;
   end;
 
@@ -489,6 +505,9 @@ begin
   FOwner := AOwner;
   FCType:=AGType;
   FName:=AGType; // used by LookupName in namespace
+  FVersion := TgirNamespace(FOwner).Version.AsMajor;
+  FDeprecatedVersion := girVersion(MaxInt, MaxInt);
+
   //now some fixups :(
   if FName = 'gchar' then
     FName := 'utf8';
@@ -540,7 +559,8 @@ begin
   while Node <> nil do
   begin
     case GirTokenNameToToken(Node.NodeName) of
-      gtDoc:; // ignore
+      gtDoc,
+      gtDocDeprecated:; // ignore
       gtType: FPropType := TgirNamespace(Owner).LookupTypeByName(Node.GetAttribute('name'), Node.GetAttribute('c:type'));
       gtArray:
       begin
@@ -650,23 +670,55 @@ end;
 
 { TgirArray }
 
+function TgirArray.GetBestPointerLevel: Integer;
+var
+  ArrayCType: String;
+  TypeCType: String;
+  TypeNode: TDOMElement;
+  ArrayCTypeLevel,
+  TypeCTypeLevel: Integer;
+begin
+  ArrayCType:=TDOMElement(FNode).GetAttribute('c:type');
+  TypeNode := TdomElement(FNode.FindNode('type'));
+  TypeCType:=TDOMElement(TypeNode).GetAttribute('c:type');
+
+
+  ArrayCTypeLevel := GetPointerLevelFromCType(ArrayCType);
+  TypeCTypeLevel := GetPointerLevelFromCType(TypeCType);
+
+  if ArrayCTypeLevel > TypeCTypeLevel then
+  begin
+    FCType:=ArrayCType;
+    Exit(ArrayCTypeLevel)
+  end;
+
+  Result := TypeCTypeLevel;
+  //FCType:=TypeCType; // already assigned in TgirTypeParam.Create
+end;
+
 constructor TgirArray.Create(AOwner: TObject; ANode: TDomNode);
 var
   Node: TDomELement;
 begin
+  FObjectType:=otArray;
+  FNode := ANode;
   inherited Create(AOwner, ANode);
+  // ctype is in two places for arrays. one as an attribute of the array node.
+  // and in the subnode 'type' assigned above in inherited Create.
+  FPointerLevel:=GetBestPointerLevel;
   Node := TDomElement(ANode.FindNode('type'));
   if Node <> nil then
   begin
     FVarType := TgirNamespace(Owner).LookupTypeByName(Node.GetAttribute('name'), CType);
+    FVarType.ImpliedPointerLevel:=FPointerLevel;
     TryStrToInt(TDomElement(ANode).GetAttribute('fixed-size'), FFixedSize);
   end;
+
 
   Node := TDOMElement(ANode.ParentNode);
   FParentFieldName := Node.GetAttribute('name');
   if FName = '' then
     FName := FParentFieldName;
-  FObjectType:=otArray;
 end;
 
 { TgirObject }
@@ -712,7 +764,8 @@ begin
   while Node <> nil do
   begin
     case GirTokenNameToToken(Node.NodeName) of
-      gtDoc:;
+      gtDoc,
+      gtDocDeprecated:;
       gtType: FFields.Add(TgirTypeParam.Create(Owner, ANode));
       gtCallback: FFields.Add(TgirCallback.Create(Owner, Node));
       gtArray: Fields.Add(TgirArray.Create(Owner, Node));
@@ -730,7 +783,8 @@ var
   NameStr: String;
 begin
   case ANodeType of
-    gtDoc:;
+    gtDoc,
+    gtDocDeprecated:;
     gtField : HandleField(ANode);
     gtUnion: HandleUnion(ANode);
     gtFunction: begin
@@ -778,13 +832,12 @@ end;
 constructor TGirFunctionParam.Create(AOwner: TObject; ANode: TDomNode);
 begin
   inherited Create(AOwner, ANode);
-  FObjectType:=otFunctionParam;
 end;
 
-constructor TGirFunctionParam.Create(AOwner: TObject; ANode: TDomNode;
-  AIsInstanceParam: Boolean);
+constructor TGirFunctionParam.Create(AOwner: TObject; ANode: TDomNode; AIsInstanceParam: Boolean);
 begin
   inherited Create(AOwner, ANode, AIsInstanceParam);
+  FObjectType:=otFunctionParam;
 end;
 
 { TgirTypeParam }
@@ -837,7 +890,7 @@ constructor TgirTypeParam.Create(AOwner: TObject; ANode: TDomNode);
     if Pos('const ', C_Type) > 0 then
     begin
       FIsConst:=True;
-      Result := Copy(C_Type, 7, Length(C_Type) - 6);
+      Result := Copy(C_Type, 7, Length(C_Type));
     end
     else
       Result := C_Type;
@@ -848,6 +901,10 @@ var
   Tmp: String;
   Token: TGirToken;
   VarTypeName: String;
+  SubTypeNode: TDomElement;
+  SubTypeName: String;
+  ParamDir: TGirToken;
+  ParamPointerLevel: Integer;
 begin
   inherited Create(AOwner, ANode);
   //NodeURL(ANode);
@@ -856,12 +913,24 @@ begin
   if Node = nil then
      girError(geError, Format(geMissingNode,[ClassName, '', ANode.NodeName]));
 
+  FPointerLevel:=-1;
+
+  ParamDir:= GirTokenNameToToken(TDomElement(ANode).GetAttribute('direction'));
+  case ParamDir of
+    gtIn,
+    gtEmpty: ParamPointerLevel := 0;
+    gtOut,
+    gtInOut: ParamPointerLevel := 1;
+  end;
+
+
   while Node <> nil do
   begin
     // it's one or the other
     Token := GirTokenNameToToken(Node.NodeName);
     case Token of
-      gtDoc:;
+      gtDoc,
+      gtDocDeprecated:;
       gtType:    begin
                    C_Type := AssignC_Type(Node.GetAttribute('c:type'));
 
@@ -870,13 +939,30 @@ begin
                    if VarTypeName = '' then
                      VarTypeName:= StringReplace(C_Type, '*', '', [rfReplaceAll]);
                    FVarType := TgirNamespace(Owner).LookupTypeByName(VarTypeName, C_Type);
+
+                   SubTypeNode := TDomElement(Node.FindNode('type'));
+                   if SubTypeNode <> nil then
+                   begin
+                     SubTypeName := SubTypeNode.GetAttribute('name');
+                     if  (SubTypeName = 'any') or (SubTypeName = 'gpointer') then // 'any' means gpointer for some reason
+                       Inc(ParamPointerLevel);
+                   end;
+                   if InheritsFrom(TgirArray) then
+                     ParamPointerLevel:=TgirArray(Self).GetBestPointerLevel
+                   else if GetPointerLevelFromCType > ParamPointerLevel then
+                     ParamPointerLevel:=GetPointerLevelFromCType;
                  end;
       gtArray:   begin
+
                    C_Type := AssignC_Type(Node.GetAttribute('c:type'));
                    FVarType := TgirNamespace(Owner).LookupTypeByName(TDOMElement(Node.FirstChild).GetAttribute('name'), C_Type);
                    Tmp := Node.GetAttribute('length');
                    if Tmp <> '' then
                      FVarType.ImpliedPointerLevel:=StrToInt(Tmp);
+                   if PointerLevelFromVarName(C_Type) > ParamPointerLevel then
+                     ParamPointerLevel:=PointerLevelFromVarName(C_Type);
+                   if (ParamPointerLevel = 0) and (ParamDir in [gtOut, gtInOut]) then
+                     ParamPointerLevel:=1;
                  end;
       gtVarArgs: begin
                    FVarType := nil
@@ -888,11 +974,21 @@ begin
   end;
 
 
-
-  FPointerLevel := PointerLevelFromVarName(C_Type);
+  //if FPointerLevel = -1 then
+  //  FPointerLevel := PointerLevelFromVarName(C_Type);
+  if ParamPointerLevel > FPointerLevel then
+    FPointerLevel:=ParamPointerLevel;
 
   if (FVarType <> nil) {and (GirTokenNameToToken(ANode.NodeName) = gtArray)} then
-    FVarType.ImpliedPointerLevel := PointerLevelFromVarName(CType);
+  begin
+    FVarType.ImpliedPointerLevel:=FPointerLevel;
+    //FVarType.ImpliedPointerLevel := PointerLevelFromVarName(CType);
+    if FVarType.Deprecated and (TgirNamespace(Owner).DeprecatedVersion <= DeprecatedVersion) and not FVarType.DeprecatedOverride then
+    begin
+      girError(geWarn, Format('Type %s is deprecated but is used by %s. Including %s',[FVarType.CType, Name, FVarType.CType]));
+      FVarType.DeprecatedOverride:=True;
+    end;
+  end;
 
   if (FVarType <> nil) and (Token <> gtVarArgs) then
       FVarType.ImpliedPointerLevel:=PointerLevel; //only will grow
@@ -911,7 +1007,7 @@ begin
       Node := TDOMElement(Node.ParentNode);
     end;
     WriteLn('Vartype is nil when it shouldnt be! '+VarTypeName );
-    raise Exception.Create('Vartype is nil when it shouldnt be! ');
+    raise Exception.Create('Vartype is nil when it shouldn''t be! ');
   end;
   FObjectType:=otTypeParam;
 end;
@@ -979,13 +1075,14 @@ var
     while PNode <> nil do
     begin
       case GirTokenNameToToken(PNode.NodeName) of
-        gtDoc:;
+        gtDoc,
+      gtDocDeprecated:;
         gtParameter:
           begin
-            Param := TGirFunctionParam.Create(AOwner, PNode);
+            Param := TGirFunctionParam.Create(AOwner, PNode, False);
             FParams.Add(Param);
           end;
-          gtInstanceParameter:
+        gtInstanceParameter:
           begin
             Param := TGirFunctionParam.Create(AOwner, PNode, True);
             FParams.Add(Param);
@@ -1020,7 +1117,8 @@ begin
   while Node <> nil do
   begin
     case GirTokenNameToToken(Node.NodeName) of
-      gtDoc:;
+      gtDoc,
+      gtDocDeprecated:;
       gtReturnValue: FReturns := TgirFunctionReturn.Create(AOwner, Node);
       gtParameters: CreateParameters(Node);
       else
@@ -1033,12 +1131,6 @@ begin
       WriteLn('Return value not defined for: ', Name);
       Halt
     end;
- FDeprecated:=TDOMElement(ANode).GetAttribute('deprecated') <> '';
- if FDeprecated then
- begin
-    FDeprecatedMsg:=TDOMElement(ANode).GetAttribute('deprecated');
-    FDeprecatedVersion:=TDOMElement(ANode).GetAttribute('deprecated-version');
- end;
  FObjectType:=otFunction;
 end;
 
@@ -1063,14 +1155,40 @@ end;
 
 { TgirEnumeration }
 
-procedure TgirEnumeration.AddMember(AName, AValue, ACIdentifier: String);
+procedure TgirEnumeration.AddMember(AName, AValue, ACIdentifier: String;
+  Node: TDomElement);
 var
   Member: PgirEnumMember;
+  IntValue: LongInt;
+  FailPoint: Integer;
 begin
+  if (ACIdentifier = '') and Assigned(Node) then
+  begin
+    // sometimes there is an attribute child node
+    Node := TDomElement(Node.FirstChild);
+    while Node <> nil do
+    begin
+      if Node.NodeName = 'attribute' then
+      begin
+        if Node.GetAttribute('name') = 'c:identifier' then
+          ACIdentifier:=Node.GetAttribute('value');
+      end;
+      Node := TDomElement(Node.NextSibling);
+    end;
+  end;
   if ACIdentifier = 'GDK_DRAG_MOTION' then ACIdentifier := 'GDK_DRAG_MOTION_';
   if ACIdentifier = 'GDK_DRAG_STATUS' then ACIdentifier := 'GDK_DRAG_STATUS_';
   if ACIdentifier = 'GDK_PROPERTY_DELETE' then ACIdentifier := 'GDK_PROPERTY_DELETE_';
 
+  // See of the enum needs a signed type or not. Probably not.
+  if not FNotIntTypeEnum and not FNeedsSignedType then
+  begin
+    Val(AValue, IntValue, FailPoint);
+    if (FailPoint = 0) and (Length(AValue) > 0) and (AValue[1] = '-') then
+      FNeedsSignedType:=True;
+    if FailPoint <> 0 then
+      FNotIntTypeEnum:=True; // so we won't continue trying to convert invalid values to ints.
+  end;
 
   New(Member);
   Member^.Name:=AName;
@@ -1100,8 +1218,9 @@ begin
   while Node <> nil do
   begin
     case GirTokenNameToToken(Node.NodeName) of
-      gtDoc:;
-      gtMember: AddMember(Node.GetAttribute('name'), Node.GetAttribute('value'),Node.GetAttribute('c:identifier'));
+      gtDoc,
+      gtDocDeprecated:;
+      gtMember: AddMember(Node.GetAttribute('name'), Node.GetAttribute('value'),Node.GetAttribute('c:identifier'), Node);
       // some enumerations seem to have functions part of them. They are only functions directly related to the enumeration and cannot be part of the enum
       gtFunction: HandleFunction(Node);
     else
@@ -1127,10 +1246,13 @@ var
   Node: TDOMElement;
 begin
   inherited Create(AOwner, ANode);
+  FCName:=TDomELement(ANode).GetAttribute('c:type');
+  if FCName = '' then
+    FCName := FName;
   Node := TDomELement(ANode.FindNode('type'));
   FTypeDecl := TgirNamespace(Owner).LookupTypeByName(Node.GetAttribute('name'), Node.GetAttribute('c:type'));
   FValue:= TDOMElement(ANode).GetAttribute('value');
-  FIsString:=Node.GetAttribute('c:type') = 'gchar*';
+  FIsString:=(Node.GetAttribute('c:type') = 'gchar*') or (Node.GetAttribute('name') = 'utf8');
   //girError(geDebug, Format('Added constant "%s" with value "%s" of type "%s"',[Name, Value, FTypeDecl.Name]));
   FObjectType:=otConstant;
 end;
@@ -1158,6 +1280,8 @@ begin
   FOwner := AOwner;
   FCType:=ACtype;
   FObjectType:=otFuzzyType;
+  FVersion := TgirNamespace(FOwner).Version.AsMajor;
+  FDeprecatedVersion := girVersion(MaxInt, MaxInt); // not deprecated
   //girError(geFuzzy, 'Creating Fuzzy Type "'+AName+'/'+ACtype+'"');
 end;
 
@@ -1200,6 +1324,8 @@ begin
   FCType:=ACType;
   FTranslatedName:=ATranslatedName;
   FObjectType:=otAlias;
+  FVersion := TgirNamespace(FOwner).Version.AsMajor;
+  FDeprecatedVersion := girVersion(MaxInt, MaxInt); // not deprecated
 end;
 
 { TGirBaseType }
@@ -1222,7 +1348,19 @@ begin
     Result := Self;
 end;
 
-constructor TGirBaseType.Create(AOwner: TObject; ANode: TDOMNode);
+function TGirBaseType.GetPointerLevelFromCType(ACType: String): Integer;
+var
+  C: Char;
+begin
+  if ACType = '' then
+    ACType:=FCType;
+  Result := 0;
+  for C in ACType do
+    if C = '*' then
+      Inc(Result);
+end;
+
+constructor TGirBaseType.Create(AOwner: TObject; ANode: TDomNode);
 var
   Element: TDOMElement absolute ANode;
   Node: TDomNode;
@@ -1232,8 +1370,17 @@ begin
     girError(geError, 'Creating '+ClassName+' with a nil node');
   FOwner := AOwner;
   FCType := Element.GetAttribute('c:type');
+  if FCType = '' then
+    FCType := Element.GetAttribute('glib:type-name');
   FName  := Element.GetAttribute('name');
-  FVersion:= Element.GetAttribute('version');
+  try
+    FVersion:= girVersion(Element.GetAttribute('version'));
+  except
+    FVersion := TgirNamespace(FOwner).Version.AsMajor;
+  end;
+
+  FDisguised := Element.GetAttribute('disguised') = '1';
+  FGLibGetType:= Element.GetAttribute('glib:get-type');
   AttrValue := Element.GetAttribute('bits');
   if AttrValue <> '' then
     FBits := StrToInt(AttrValue);
@@ -1241,6 +1388,24 @@ begin
   if Node <> nil then
     FDoc := Node.FirstChild.TextContent;
   ImpliedPointerLevel:=2;
+  FDeprecated:=TDOMElement(ANode).GetAttribute('deprecated') = '1';
+  if FDeprecated then
+  begin
+    Node := ANode.FindNode('doc-deprecated');
+    if Node <> nil then
+    begin
+      FDeprecatedMsg:=StringReplace(Node.TextContent, #10, ' ', [rfReplaceAll]);
+      FDeprecatedMsg := StringReplace(FDeprecatedMsg, '''', '''''', [rfReplaceAll]); // replace ' with ''
+    end;
+    try
+      FDeprecatedVersion:=girVersion(TDOMElement(ANode).GetAttribute('deprecated-version'));
+    except
+      FDeprecatedVersion:=TgirNamespace(FOwner).Version.AsMajor;
+    end;
+  end
+  else
+    FDeprecatedVersion := girVersion(MaxInt, MaxInt); // not deprecated
+
   FObjectType:=otBaseType;
 end;
 
