@@ -269,17 +269,16 @@ implementation
 uses girpascalwriter, girCTypesMapping, girErrors, typinfo;
 
 function IndentText(const AText: String; Spaces: Integer = 0; LineEndingCount: Integer = 1): String;
+var
+  i: Integer;
 begin
   if AText = '' then
     Exit('');
   SetLength(Result, Spaces);
   FillChar(Result[1], Spaces, ' ');
   Result := Result+AText;
-  if LineEndingCount > 0 then
-     begin
-       SetLength(Result, Length(Result)+Length(LineEnding)*LineEndingCount);
-       FillChar(Result[Length(AText)+Spaces+1], LineEndingCount, LineEnding);
-     end;
+  for i := 1 to LineEndingCount do
+    Result := Result+LineEnding;
 end;
 
 function MakePointerTypesForType(const AName: String; PointerLevel: Integer): TStringList;
