@@ -137,7 +137,7 @@ begin
 
   Result.Major:=StrToInt(Copy(AVersion,1, SplitPoint-1));
   Minor := Copy(AVersion,SplitPoint+1, MaxInt);
-  SplitPoint := Pos('.', AVersion);
+  SplitPoint := Pos('.', Minor);
   // we are not interested in the third version chunk
   if SplitPoint > 0 then
     Minor := Copy(Minor,1, SplitPoint-1);
