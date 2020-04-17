@@ -34,7 +34,7 @@ type
                gtGlibSignal, gtImplements, gtPrerequisite,gtVarArgs, gtObject, gtClassStruct, gtGType,
                // Direction for parameters.  in is default = no pointer. out and inout means one pointer level.
                // If subnode is array then increase pointer level.
-               gtIn, gtOut, gtInOut
+               gtIn, gtOut, gtInOut, gtSourcePosition
                );
 
   TGirVersion = object
@@ -88,7 +88,8 @@ var
     'gtype',
     'in',
     'out',
-    'inout'
+    'inout',
+    'source-position'
   );
 
   function GirTokenNameToToken(AName: String): TGirToken;
