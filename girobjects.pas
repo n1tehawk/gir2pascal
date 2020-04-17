@@ -784,7 +784,8 @@ var
 begin
   case ANodeType of
     gtDoc,
-    gtDocDeprecated:;
+    gtDocDeprecated,
+    gtSourcePosition:;
     gtField : HandleField(ANode);
     gtUnion: HandleUnion(ANode);
     gtFunction: begin
@@ -1118,7 +1119,8 @@ begin
   begin
     case GirTokenNameToToken(Node.NodeName) of
       gtDoc,
-      gtDocDeprecated:;
+      gtDocDeprecated,
+      gtSourcePosition:;
       gtReturnValue: FReturns := TgirFunctionReturn.Create(AOwner, Node);
       gtParameters: CreateParameters(Node);
       else
@@ -1219,7 +1221,8 @@ begin
   begin
     case GirTokenNameToToken(Node.NodeName) of
       gtDoc,
-      gtDocDeprecated:;
+      gtDocDeprecated,
+      gtSourcePosition:;
       gtMember: AddMember(Node.GetAttribute('name'), Node.GetAttribute('value'),Node.GetAttribute('c:identifier'), Node);
       // some enumerations seem to have functions part of them. They are only functions directly related to the enumeration and cannot be part of the enum
       gtFunction: HandleFunction(Node);
