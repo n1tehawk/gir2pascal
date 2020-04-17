@@ -118,7 +118,7 @@ end;
 function TCommandLineOptions.FindOptionByIdentifier(AIdentifier: Integer
   ): TOption;
 begin
-
+  Result := Nil;
 end;
 
 procedure TCommandLineOptions.DoError(ErrorMessage: String);
@@ -275,7 +275,6 @@ end;
 function TCommandLineOptions.OptionValue(AName: String): String;
 var
   Opt: TOption;
-  S: String;
 begin
   Opt := FindOptionByName(AName);
   Result := Opt.Value;

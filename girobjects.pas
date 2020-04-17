@@ -1303,6 +1303,7 @@ var
   NodePath: String;
 begin
   inherited Create(AOwner, ANode);
+  NodePath := '';
   Node := TDomELement(ANode.FindNode('type'));
   TmpNode := Node;
     while TmpNode <> nil do
