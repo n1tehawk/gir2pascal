@@ -895,6 +895,11 @@ constructor TgirTypeParam.Create(AOwner: TObject; ANode: TDomNode);
     end
     else
       Result := C_Type;
+
+    { Pascal doesn't support the concept of "pointer to const", so let's reduce
+      some special cases by stripping the "const" keyword. }
+    // used by GLib-2.0.gir and Gio-2.0.gir
+    Result := StringReplace(Result, 'gchar* const*', 'gchar**', [rfReplaceAll]);
   end;
 var
   Node: TDOMElement;
