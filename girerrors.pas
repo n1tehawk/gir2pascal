@@ -46,6 +46,7 @@ type
       'Fuzzy'
     );
     procedure girError(AType: TgirError; AMsg: String);
+    procedure girError(AType: TgirError; const Fmt: string; const Args: array of Const);
 
     //returns old handler
     function girSetErrorHandler(AHandler: TgirErrorFunc; AUserData: Pointer): TgirErrorFunc;
@@ -66,6 +67,11 @@ begin
  // if AType = geDebug then
     WriteLn(girErrorName[AType],': ', AMsg);
 
+end;
+
+procedure girError(AType: TgirError; const Fmt: string; const Args: array of Const);
+begin
+  girError(AType, Format(Fmt, Args));
 end;
 
 function girSetErrorHandler(AHandler: TgirErrorFunc; AUserData: Pointer
