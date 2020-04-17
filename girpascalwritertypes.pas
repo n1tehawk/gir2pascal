@@ -945,7 +945,9 @@ begin
 
   AItem.TranslatedName:=MakePascalTypeFromCType(AItem.CType);
 
-  if AItem.Writing < msWritten then
+  if AItem.IsOpaque then
+    HandleOpaqueType(TgirFuzzyType(TargetType))
+  else if AItem.Writing < msWritten then
     WantTypeSection.Lines.Add(IndentText(Aitem.TranslatedName+' = '+ ResolvedForName+';' ,2,0));
 end;
 

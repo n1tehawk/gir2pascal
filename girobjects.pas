@@ -109,11 +109,13 @@ type
 
   TgirAlias = class(TGirBaseType)
   private
+    FIsOpaque: Boolean;
     FForType: TGirBaseType;
     function GetForType: TGirBaseType;
   public
     constructor Create(AOwner: TObject; ANode: TDomNode); override;
     constructor Create(AOwner: TObject; AName, ACType, ATranslatedName: String);
+    property IsOpaque: Boolean read FIsOpaque;
     property ForType: TGirBaseType read GetForType write FForType;
   end;
 
@@ -1305,7 +1307,7 @@ end;
 constructor TgirAlias.Create(AOwner: TObject; ANode: TDomNode);
 var
   TmpNode, Node: TDOMElement;
-  NodePath: String;
+  NodePath, NodeName, NodeCType: String;
 begin
   inherited Create(AOwner, ANode);
   NodePath := '';
@@ -1320,8 +1322,26 @@ begin
       TmpNode := TDOMElement(TmpNode.ParentNode);
     end;
 
-  //WriteLn('ALIAS: ', Node.GetAttribute('name')+' ', NodePath);
-  FForType := TgirNamespace(Owner).LookupTypeByName(Node.GetAttribute('name'), Node.GetAttribute('c:type'));
+  NodeName := Node.GetAttribute('name');
+  NodeCType := Node.GetAttribute('c:type');
+
+  { "alias" might implicitly declare an 'opaque' data type. In that case we want
+    to substitute the type (so that a suitable fuzzy type gets added), and tag
+    the current object; which allows TPascalUnit.HandleAlias() to take care of
+    correctly emitting the opaque type (= Pascal record) later. }
+  if (NodeName = 'none') and (NodeCType = 'void') then
+  begin
+    FIsOpaque := True;
+    Node := ANode as TDOMElement;
+    if Node.hasAttribute('name') then
+      NodeName := Node.GetAttribute('name'); // "name" attribute of ANode
+    if Node.hasAttribute('c:type') then
+      NodeCType := Node.GetAttribute('c:type'); // "c:type" attribute of ANode
+  end;
+
+  //WriteLn('ALIAS: ', NodeName, ' ', NodePath);
+  FForType := TgirNamespace(Owner).LookupTypeByName(NodeName, NodeCType);
+  if FIsOpaque then assert(FForType.ObjectType = otFuzzyType); // sanity check
   FObjectType:=otAlias;
 end;
 
