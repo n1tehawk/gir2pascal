@@ -2289,7 +2289,7 @@ begin
     FTestPascalFile.WriteString(GTypeSize);
     FTestPascalBody := TStringList.Create;
     FTestPascalBody.Add('begin');
-    FTestPascalBody.Add(' g_type_init();');
+    FTestPascalBody.Add('  //g_type_init();'); // deprecated since GLib 2.36
 
   end;
   ResolveFuzzyTypes;
